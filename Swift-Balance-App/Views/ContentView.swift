@@ -209,8 +209,8 @@ struct ActionButton: View {
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
                     .stroke(
                         isActive
-                            ? Color.clear
-                            : LinearGradient(colors: gradient.map { $0.opacity(0.4) }, startPoint: .leading, endPoint: .trailing),
+                            ? AnyShapeStyle(Color.clear)
+                            : AnyShapeStyle(LinearGradient(colors: gradient.map { $0.opacity(0.4) }, startPoint: .leading, endPoint: .trailing)),
                         lineWidth: 1.5
                     )
             )
