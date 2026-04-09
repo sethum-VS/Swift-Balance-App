@@ -25,6 +25,9 @@ struct SessionLog: Codable, Identifiable {
     /// The wall-clock date/time when the session ended.
     let date: Date
 
+    /// The name of the activity profile that was active during this session.
+    let activityName: String
+
     // MARK: - Computed Helpers
 
     /// Human-readable duration string (HH:mm:ss).
