@@ -20,7 +20,7 @@ struct Swift_Balance_AppApp: App {
             ContentView()
                 .environmentObject(timeManager)
         }
-        .onChange(of: scenePhase) { _, newPhase in
+        .onChange(of: scenePhase) { newPhase in
             switch newPhase {
             case .background:
                 timeManager.handleBackgrounded()
