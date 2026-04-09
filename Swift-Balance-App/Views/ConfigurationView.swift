@@ -132,73 +132,78 @@ struct ConfigurationView: View {
             ZStack {
                 Color.black.ignoresSafeArea()
 
-                VStack(spacing: 24) {
-                    // Name field
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Activity Name")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .textCase(.uppercase)
+                VStack(spacing: 0) {
+                    ScrollView {
+                        VStack(spacing: 24) {
+                            // Name field
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Activity Name")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .textCase(.uppercase)
 
-                        TextField("e.g. Cooking", text: $newProfileName)
-                            .textFieldStyle(.plain)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 12)
-                            .background(
-                                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
-                            )
-                            .foregroundStyle(.white)
-                    }
+                                TextField("e.g. Cooking", text: $newProfileName)
+                                    .textFieldStyle(.plain)
+                                    .padding(.horizontal, 16)
+                                    .padding(.vertical, 12)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                            .fill(Color.white.opacity(0.08))
+                                    )
+                                    .foregroundStyle(.white)
+                            }
 
-                    // Category picker
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Category")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .textCase(.uppercase)
+                            // Category picker
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Category")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .textCase(.uppercase)
 
-                        Picker("Category", selection: $newProfileCategory) {
-                            Text("Top-Up").tag(AppState.toppingUp)
-                            Text("Consume").tag(AppState.consuming)
-                        }
-                        .pickerStyle(.segmented)
-                    }
+                                Picker("Category", selection: $newProfileCategory) {
+                                    Text("Top-Up").tag(AppState.toppingUp)
+                                    Text("Consume").tag(AppState.consuming)
+                                }
+                                .pickerStyle(.segmented)
+                            }
 
-                    // Icon picker
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Icon")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.6))
-                            .textCase(.uppercase)
+                            // Icon picker
+                            VStack(alignment: .leading, spacing: 8) {
+                                Text("Icon")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.white.opacity(0.6))
+                                    .textCase(.uppercase)
 
-                        LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
-                            ForEach(iconOptions, id: \.self) { icon in
-                                Button {
-                                    newProfileIcon = icon
-                                } label: {
-                                    Image(systemName: icon)
-                                        .font(.title3)
-                                        .foregroundStyle(
-                                            newProfileIcon == icon
-                                                ? (newProfileCategory == .toppingUp ? Color(hex: 0x00E5A0) : Color(hex: 0xFC466B))
-                                                : .white.opacity(0.4)
-                                        )
-                                        .frame(width: 36, height: 36)
-                                        .background(
-                                            RoundedRectangle(cornerRadius: 8)
-                                                .fill(newProfileIcon == icon
-                                                      ? Color.white.opacity(0.1)
-                                                      : Color.clear)
-                                        )
+                                LazyVGrid(columns: Array(repeating: GridItem(.flexible()), count: 8), spacing: 12) {
+                                    ForEach(iconOptions, id: \.self) { icon in
+                                        Button {
+                                            newProfileIcon = icon
+                                        } label: {
+                                            Image(systemName: icon)
+                                                .font(.title3)
+                                                .foregroundStyle(
+                                                    newProfileIcon == icon
+                                                        ? (newProfileCategory == .toppingUp ? Color(hex: 0x00E5A0) : Color(hex: 0xFC466B))
+                                                        : .white.opacity(0.4)
+                                                )
+                                                .frame(width: 36, height: 36)
+                                                .background(
+                                                    RoundedRectangle(cornerRadius: 8)
+                                                        .fill(newProfileIcon == icon
+                                                              ? Color.white.opacity(0.1)
+                                                              : Color.clear)
+                                                )
+                                        }
+                                    }
                                 }
                             }
                         }
+                        .padding(.horizontal, 20)
+                        .padding(.top, 16)
+                        .padding(.bottom, 24)
                     }
 
-                    Spacer()
-
-                    // Save button
+                    // Save button (Pinned at bottom)
                     Button {
                         guard !newProfileName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                         let profile = ActivityProfile(
@@ -231,9 +236,9 @@ struct ConfigurationView: View {
                             .foregroundStyle(.white)
                     }
                     .disabled(newProfileName.trimmingCharacters(in: .whitespaces).isEmpty)
+                    .padding(.horizontal, 20)
+                    .padding(.bottom, 24) // Added padding to ensure it respects bottom safe area
                 }
-                .padding(.horizontal, 20)
-                .padding(.top, 16)
             }
             .navigationTitle("New Activity")
             .navigationBarTitleDisplayMode(.inline)
