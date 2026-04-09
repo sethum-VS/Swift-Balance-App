@@ -13,12 +13,8 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             // MARK: - Background
-            LinearGradient(
-                colors: [Color(hex: 0x0F0C29), Color(hex: 0x302B63), Color(hex: 0x24243E)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            Color.black
+                .ignoresSafeArea()
 
             VStack(spacing: 32) {
 
@@ -41,6 +37,11 @@ struct ContentView: View {
             .padding(.top, 16)
         }
         .preferredColorScheme(.dark)
+        .alert("Action Denied", isPresented: $timeManager.showZeroBalanceError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please top up the app first.")
+        }
     }
 
     // MARK: - Header
@@ -86,7 +87,7 @@ struct ContentView: View {
 
     private var clockView: some View {
         ZStack {
-            // Outer neumorphic ring (simplified for Sprint 1)
+            // Outer ring
             Circle()
                 .stroke(
                     AngularGradient(
@@ -124,6 +125,10 @@ struct ContentView: View {
             }
             .animation(.easeInOut(duration: 0.3), value: timeManager.currentState)
         }
+        // MARK: Accessibility — clock ring
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Timer clock")
+        .accessibilityValue("\(stateLabel). Session time \(timeManager.formattedSessionTime). Total balance \(timeManager.formattedBalance).")
     }
 
     // MARK: - Controls
@@ -136,7 +141,10 @@ struct ContentView: View {
                 icon: timeManager.currentState == .toppingUp ? "stop.fill" : "plus",
                 gradient: [Color(hex: 0x00C9FF), Color(hex: 0x92FE9D)],
                 isActive: timeManager.currentState == .toppingUp,
-                isDisabled: timeManager.currentState == .consuming
+                isDisabled: timeManager.currentState == .consuming,
+                accessibilityLabel: timeManager.currentState == .toppingUp
+                    ? "Stop top-up session"
+                    : "Start top-up session"
             ) {
                 timeManager.startTopUp()
             }
@@ -147,7 +155,10 @@ struct ContentView: View {
                 icon: timeManager.currentState == .consuming ? "stop.fill" : "minus",
                 gradient: [Color(hex: 0xFC466B), Color(hex: 0x3F5EFB)],
                 isActive: timeManager.currentState == .consuming,
-                isDisabled: timeManager.currentState == .toppingUp || timeManager.timeBalance <= 0
+                isDisabled: timeManager.currentState == .toppingUp,
+                accessibilityLabel: timeManager.currentState == .consuming
+                    ? "Stop consume session"
+                    : "Start consume session. Balance is \(timeManager.formattedBalance)."
             ) {
                 timeManager.startConsume()
             }
@@ -185,6 +196,7 @@ struct ActionButton: View {
     let gradient: [Color]
     let isActive: Bool
     let isDisabled: Bool
+    let accessibilityLabel: String
     let action: () -> Void
 
     var body: some View {
@@ -221,6 +233,9 @@ struct ActionButton: View {
         }
         .disabled(isDisabled && !isActive)
         .opacity(isDisabled && !isActive ? 0.4 : 1.0)
+        // MARK: Accessibility
+        .accessibilityLabel(accessibilityLabel)
+        .accessibilityAddTraits(isActive ? [.isSelected] : [])
     }
 }
 
