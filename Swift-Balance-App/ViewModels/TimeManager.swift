@@ -21,11 +21,13 @@ final class TimeManager: ObservableObject {
     @Published var currentState: AppState = .idle
 
     /// Total accumulated credit in seconds.
-    /// Initialised with a mock value of 4 500 s (≈ 1 250 CR for testing).
-    @Published var timeBalance: Int = 4500
+    @Published var timeBalance: Int = 0
 
     /// Elapsed (top-up) or remaining (consume) seconds for the running session.
     @Published var currentSessionTime: Int = 0
+
+    /// Set to true when the user taps Consume with a zero balance; triggers an alert in the UI.
+    @Published var showZeroBalanceError: Bool = false
 
     // MARK: - Private
 
@@ -59,8 +61,12 @@ final class TimeManager: ObservableObject {
     }
 
     /// Begins a Consume session, or stops the current timer if already consuming.
+    /// Shows an alert if the balance is zero instead of silently ignoring the tap.
     func startConsume() {
-        guard timeBalance > 0 else { return }   // nothing to spend
+        guard timeBalance > 0 else {
+            showZeroBalanceError = true
+            return
+        }
         if currentState == .consuming {
             stopTimer()
             return

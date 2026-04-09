@@ -13,12 +13,8 @@ struct ContentView: View {
     var body: some View {
         ZStack {
             // MARK: - Background
-            LinearGradient(
-                colors: [Color(hex: 0x0F0C29), Color(hex: 0x302B63), Color(hex: 0x24243E)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            Color.black
+                .ignoresSafeArea()
 
             VStack(spacing: 32) {
 
@@ -41,6 +37,11 @@ struct ContentView: View {
             .padding(.top, 16)
         }
         .preferredColorScheme(.dark)
+        .alert("Action Denied", isPresented: $timeManager.showZeroBalanceError) {
+            Button("OK", role: .cancel) { }
+        } message: {
+            Text("Please top up the app first.")
+        }
     }
 
     // MARK: - Header
@@ -147,7 +148,7 @@ struct ContentView: View {
                 icon: timeManager.currentState == .consuming ? "stop.fill" : "minus",
                 gradient: [Color(hex: 0xFC466B), Color(hex: 0x3F5EFB)],
                 isActive: timeManager.currentState == .consuming,
-                isDisabled: timeManager.currentState == .toppingUp || timeManager.timeBalance <= 0
+                isDisabled: timeManager.currentState == .toppingUp
             ) {
                 timeManager.startConsume()
             }
