@@ -220,12 +220,12 @@ struct ConfigurationView: View {
                                 RoundedRectangle(cornerRadius: 14, style: .continuous)
                                     .fill(
                                         newProfileName.trimmingCharacters(in: .whitespaces).isEmpty
-                                            ? Color.white.opacity(0.1)
-                                            : LinearGradient(
+                                            ? AnyShapeStyle(Color.white.opacity(0.1))
+                                            : AnyShapeStyle(LinearGradient(
                                                 colors: [Color(hex: 0x6C63FF), Color(hex: 0x9D50BB)],
                                                 startPoint: .leading,
                                                 endPoint: .trailing
-                                            )
+                                            ))
                                     )
                             )
                             .foregroundStyle(.white)
