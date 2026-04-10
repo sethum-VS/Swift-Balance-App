@@ -207,7 +207,7 @@ struct ConfigurationView: View {
                     Button {
                         guard !newProfileName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
                         let profile = ActivityProfile(
-                            id: UUID(),
+                            id: "local_\(UUID().uuidString.prefix(8))",
                             name: newProfileName.trimmingCharacters(in: .whitespaces),
                             category: newProfileCategory,
                             iconName: newProfileIcon
