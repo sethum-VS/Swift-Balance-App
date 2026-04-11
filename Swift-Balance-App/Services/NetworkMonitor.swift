@@ -7,6 +7,7 @@
 
 import Foundation
 import Network
+import Combine
 
 /// Monitors internet reachability in real-time.
 final class NetworkMonitor: ObservableObject {
