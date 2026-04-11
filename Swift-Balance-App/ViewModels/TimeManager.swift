@@ -75,6 +75,11 @@ final class TimeManager: ObservableObject {
     var formattedBalance: String { formatSeconds(globalBalance) }
     var formattedSessionTime: String { formatSeconds(currentSessionTime) }
 
+    /// True only when device has internet AND server WS confirmed reachable.
+    var isBackendAvailable: Bool {
+        networkMonitor.isConnected && wsClient.isConnectedToServer
+    }
+
     // MARK: - Init
 
     init(wsClient: WebSocketClient = WebSocketClient(), networkMonitor: NetworkMonitor = NetworkMonitor()) {
@@ -110,6 +115,17 @@ final class TimeManager: ObservableObject {
             }
             .store(in: &cancellables)
 
+        // Also sync when WS server becomes reachable
+        wsClient.$isConnectedToServer
+            .dropFirst()
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] serverUp in
+                if serverUp {
+                    self?.syncOfflineData()
+                }
+            }
+            .store(in: &cancellables)
+
         wsClient.connect()
         fetchActivities()
     }
@@ -131,8 +147,8 @@ final class TimeManager: ObservableObject {
         }
         triggerHaptic(.medium)
         
-        if networkMonitor.isConnected {
-            postStartTimer(activityID: profile.id)
+        if isBackendAvailable {
+            postStartTimer(activityID: profile.id, fallbackProfile: profile, fallbackCategory: .toppingUp)
         } else {
             startLocalOfflineSession(profile: profile, category: .toppingUp)
         }
@@ -150,8 +166,8 @@ final class TimeManager: ObservableObject {
         }
         triggerHaptic(.medium)
         
-        if networkMonitor.isConnected {
-            postStartTimer(activityID: profile.id)
+        if isBackendAvailable {
+            postStartTimer(activityID: profile.id, fallbackProfile: profile, fallbackCategory: .consuming)
         } else {
             startLocalOfflineSession(profile: profile, category: .consuming)
         }
@@ -161,7 +177,7 @@ final class TimeManager: ObservableObject {
         guard currentState != .idle else { return }
         triggerHaptic(.light)
         
-        if networkMonitor.isConnected {
+        if isBackendAvailable {
             postStopTimer()
         } else {
             stopLocalOfflineSession()
@@ -224,14 +240,29 @@ final class TimeManager: ObservableObject {
 
     // MARK: - HTTP Requests
 
-    private func postStartTimer(activityID: String) {
+    /// POST start with REST fallback → offline if server unreachable.
+    private func postStartTimer(activityID: String, fallbackProfile: ActivityProfile, fallbackCategory: AppState) {
         guard let url = URL(string: "\(APIConfig.timerStartURL)?activityID=\(activityID)") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+        request.timeoutInterval = 5
 
         isLoading = true
         URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
             DispatchQueue.main.async { self?.isLoading = false }
+            if error != nil {
+                print("[API] Start failed — falling back to offline")
+                DispatchQueue.main.async {
+                    self?.startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
+                }
+                return
+            }
+            if let http = response as? HTTPURLResponse, http.statusCode != 204 {
+                print("[API] Start rejected (\(http.statusCode)) — falling back to offline")
+                DispatchQueue.main.async {
+                    self?.startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
+                }
+            }
         }.resume()
     }
 

@@ -20,8 +20,11 @@ final class WebSocketClient: ObservableObject {
     /// Publishes decoded `WSEvent` objects received from the server.
     let eventSubject = PassthroughSubject<WSEvent, Never>()
 
-    /// Whether the client is currently connected to the server.
+    /// Whether the WebSocket transport layer is active.
     @Published private(set) var isConnected: Bool = false
+
+    /// Whether we have confirmed server reachability (first successful message received).
+    @Published private(set) var isConnectedToServer: Bool = false
 
     // MARK: - Private
 
@@ -69,6 +72,7 @@ final class WebSocketClient: ObservableObject {
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         isConnected = false
+        isConnectedToServer = false
         isReconnecting = false
         print("[WS] Disconnected")
     }
@@ -82,8 +86,11 @@ final class WebSocketClient: ObservableObject {
 
             switch result {
             case .success(let message):
+                // Server confirmed reachable on first successful receive
+                if !self.isConnectedToServer {
+                    DispatchQueue.main.async { self.isConnectedToServer = true }
+                }
                 self.handleMessage(message)
-                // Continue listening
                 self.receiveLoop()
 
             case .failure(let error):
@@ -141,6 +148,7 @@ final class WebSocketClient: ObservableObject {
         DispatchQueue.main.async {
             self.webSocketTask = nil
             self.isConnected = false
+            self.isConnectedToServer = false
         }
         attemptReconnect()
     }
