@@ -49,7 +49,10 @@ final class WebSocketClient: ObservableObject {
     func connect() {
         guard webSocketTask == nil else { return }
 
-        webSocketTask = session.webSocketTask(with: url)
+        var request = URLRequest(url: url)
+        request.setValue("iOS", forHTTPHeaderField: "X-Client-Type")
+
+        webSocketTask = session.webSocketTask(with: request)
         webSocketTask?.resume()
 
         isConnected = true

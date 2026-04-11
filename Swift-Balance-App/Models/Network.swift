@@ -18,6 +18,7 @@ enum APIConfig {
     static let activitiesURL = "\(baseURL)/api/activities"
     static let timerStartURL = "\(baseURL)/api/timer/start"
     static let timerStopURL  = "\(baseURL)/api/timer/stop"
+    static let syncURL       = "\(baseURL)/api/sync"
 }
 
 // MARK: - WebSocket Event
@@ -36,6 +37,17 @@ enum WSEventType {
     static let timerStarted   = "TIMER_STARTED"
     static let timerStopped   = "TIMER_STOPPED"
     static let balanceUpdated = "BALANCE_UPDATED"
+}
+
+// MARK: - Offline Models
+
+/// Represents a session completed while the device was offline.
+struct OfflineSession: Codable, Identifiable {
+    var id: UUID = UUID()
+    let activityID: String
+    let duration: Int
+    let creditsEarned: Int
+    let timestamp: Date
 }
 
 // MARK: - Event Payloads
