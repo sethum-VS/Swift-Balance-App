@@ -196,7 +196,7 @@ struct TimerView: View {
                     timeManager.stopTimer()
                 } else {
                     // Validate balance before showing picker
-                    guard timeManager.timeBalance > 0 else {
+                    guard timeManager.globalBalance > 0 else {
                         timeManager.showZeroBalanceError = true
                         return
                     }
@@ -225,7 +225,7 @@ struct TimerView: View {
     }
 
     private var balanceAccentColor: Color {
-        timeManager.timeBalance > 0 ? Color(hex: 0x00E5A0) : Color(hex: 0xFC466B)
+        timeManager.globalBalance > 0 ? Color(hex: 0x00E5A0) : Color(hex: 0xFC466B)
     }
 }
 

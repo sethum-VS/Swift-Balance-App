@@ -41,12 +41,17 @@ enum WSEventType {
 // MARK: - Event Payloads
 
 /// Payload received in a `TIMER_STARTED` WebSocket event.
+///
+/// Server sends `baseBalance` (total CR at session start) and `startTime`
+/// so client can animate both clocks via delta calculation:
+/// `globalBalance = baseBalance ± elapsed`
 struct TimerStartedPayload {
     let sessionID: String
     let activityID: String
     let activityName: String
     let activityCategory: String   // "toppingUp" or "consuming"
     let startTime: Date
+    let baseBalance: Int           // CR pool snapshot at session start
 
     /// Attempts to parse from the raw AnyCodable payload dictionary.
     init?(from dict: [String: AnyCodable]) {
@@ -60,6 +65,15 @@ struct TimerStartedPayload {
         self.activityID = aid
         self.activityName = aname
         self.activityCategory = acat
+
+        // baseBalance from server (may arrive as Double from JSON)
+        if let b = dict["baseBalance"]?.value as? Double {
+            self.baseBalance = Int(b)
+        } else if let b = dict["baseBalance"]?.value as? Int {
+            self.baseBalance = b
+        } else {
+            self.baseBalance = 0
+        }
 
         // startTime may arrive as an ISO-8601 string
         if let timeStr = dict["startTime"]?.value as? String {

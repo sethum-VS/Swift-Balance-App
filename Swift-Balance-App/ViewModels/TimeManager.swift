@@ -10,140 +10,134 @@ import Combine
 import UIKit
 import UserNotifications
 
-/// The core ViewModel that drives the Balance app's timer engine.
+/// Core ViewModel — dual-clock delta calculation engine.
 ///
-/// **Cloud-Synced Architecture (Sprint 4):**
-/// - Button taps fire REST API calls to the Go backend.
-/// - Local `@Published` state is updated **only** by incoming WebSocket events.
-/// - A local Combine timer ticks the UI display between WS broadcasts.
-/// - This guarantees the iOS app, web dashboard, and any other client
-///   stay perfectly in sync via the server as the single source of truth.
+/// **Architecture:**
+/// - Buttons → REST API → Server processes → WS broadcast → iOS state
+/// - TIMER_STARTED carries `baseBalance` + `startTime`
+/// - Local Combine timer ticks every 1s, computing:
+///   - `currentSessionTime = elapsed since startTime`
+///   - `globalBalance = baseBalance ± elapsed` (+ for topUp, - for consume)
+/// - TIMER_STOPPED / BALANCE_UPDATED snap `globalBalance` to server truth
 final class TimeManager: ObservableObject {
 
     // MARK: - UserDefaults Keys
 
     private enum Keys {
-        static let timeBalance       = "balance_timeBalance"
-        static let sessionLogs       = "balance_sessionLogs"
+        static let globalBalance  = "balance_timeBalance"
+        static let sessionLogs    = "balance_sessionLogs"
     }
 
-    // MARK: - Published State
+    // MARK: - Published State (Dual Clock)
 
-    /// The current operational state of the app.
+    /// App state machine.
     @Published var currentState: AppState = .idle
 
-    /// Total accumulated credit in seconds — synced from server via BALANCE_UPDATED.
-    @Published var timeBalance: Int {
-        didSet { UserDefaults.standard.set(timeBalance, forKey: Keys.timeBalance) }
+    /// Global CR pool — ticks live during sessions via delta calc.
+    @Published var globalBalance: Int {
+        didSet { UserDefaults.standard.set(globalBalance, forKey: Keys.globalBalance) }
     }
 
-    /// Elapsed (top-up) or remaining (consume) seconds for the running session.
+    /// Active session elapsed seconds — ticks every 1s.
     @Published var currentSessionTime: Int = 0
 
-    /// Set to true when the user taps Consume with a zero balance; triggers an alert in the UI.
+    /// Zero-balance guard alert trigger.
     @Published var showZeroBalanceError: Bool = false
 
-    /// Chronological list of completed sessions, persisted to UserDefaults.
+    /// Session history log.
     @Published var sessionLogs: [SessionLog] = []
 
-    /// Activity profiles fetched from the backend.
+    /// Server-fetched activity profiles.
     @Published var activityProfiles: [ActivityProfile] = []
 
-    /// Whether a network request is in flight (for UI loading indicators).
+    /// Network loading indicator.
     @Published var isLoading: Bool = false
 
-    /// Connection status exposed from the WebSocket client.
+    /// WebSocket connection status.
     @Published var isConnected: Bool = false
 
     // MARK: - Active Session Tracking
 
-    /// The activity profile selected for the current running session.
+    /// Currently running activity profile.
     @Published private(set) var activeProfile: ActivityProfile?
 
-    /// The name of the active activity (for display in the clock ring).
+    /// Active activity name for clock ring display.
     var activeActivityName: String? { activeProfile?.name }
 
-    /// The server-assigned session ID for the active timer.
+    /// Server-assigned session ID.
     private var activeSessionID: String?
 
-    /// The timestamp when the current session started (from the server).
+    // MARK: - Delta Calculation Internals
+
+    /// Server timestamp when session started — anchor for elapsed calc.
     private var sessionStartTime: Date?
+
+    /// CR pool snapshot at session start — baseline for delta addition.
+    private var baseBalance: Int = 0
+
+    /// Category of active session — determines +/- direction.
+    private var activeCategory: AppState = .idle
 
     // MARK: - Dependencies
 
-    /// WebSocket client for real-time server event streaming.
     private let wsClient: WebSocketClient
-
-    /// Combine subscriptions.
     private var cancellables = Set<AnyCancellable>()
-
-    /// Local UI tick timer (fires every 1s to update currentSessionTime visually).
     private var timerCancellable: AnyCancellable?
+
+    // MARK: - Formatted Helpers
+
+    /// `globalBalance` as HH:mm:ss.
+    var formattedBalance: String { formatSeconds(globalBalance) }
+
+    /// `currentSessionTime` as HH:mm:ss.
+    var formattedSessionTime: String { formatSeconds(currentSessionTime) }
 
     // MARK: - Init
 
     init(wsClient: WebSocketClient = WebSocketClient()) {
         self.wsClient = wsClient
 
-        // Restore persisted balance (fallback if server is offline)
-        timeBalance = UserDefaults.standard.integer(forKey: Keys.timeBalance)
+        // Restore persisted balance (fallback if server offline)
+        globalBalance = UserDefaults.standard.integer(forKey: Keys.globalBalance)
 
-        // Restore session log history
+        // Restore session logs
         if let data = UserDefaults.standard.data(forKey: Keys.sessionLogs),
            let decoded = try? JSONDecoder().decode([SessionLog].self, from: data) {
             sessionLogs = decoded
         }
 
-        // Request notification permission
         requestNotificationPermission()
-
-        // Subscribe to WebSocket events
         subscribeToWSEvents()
 
-        // Monitor connection status
         wsClient.$isConnected
             .receive(on: DispatchQueue.main)
             .assign(to: &$isConnected)
 
-        // Connect to the server and fetch initial data
         wsClient.connect()
         fetchActivities()
     }
 
-    // MARK: - Formatted Helpers
-
-    /// Returns `timeBalance` formatted as **HH:mm:ss**.
-    var formattedBalance: String { formatSeconds(timeBalance) }
-
-    /// Returns `currentSessionTime` formatted as **HH:mm:ss**.
-    var formattedSessionTime: String { formatSeconds(currentSessionTime) }
-
     // MARK: - Profile Helpers
 
-    /// All profiles in the Top-Up category.
     var topUpProfiles: [ActivityProfile] {
         activityProfiles.filter { $0.category == .toppingUp }
     }
 
-    /// All profiles in the Consume category.
     var consumeProfiles: [ActivityProfile] {
         activityProfiles.filter { $0.category == .consuming }
     }
 
-    /// Adds a new activity profile locally (for offline use).
     func addProfile(_ profile: ActivityProfile) {
         activityProfiles.append(profile)
     }
 
-    /// Removes an activity profile by ID.
     func deleteProfile(id: String) {
         activityProfiles.removeAll { $0.id == id }
     }
 
     // MARK: - REST API Actions
 
-    /// Sends a POST to the backend to start a Top-Up session.
-    /// **Does NOT update local state** — waits for WS broadcast.
+    /// POST start — no local state change, wait for WS.
     func startTopUp(with profile: ActivityProfile) {
         if currentState == .toppingUp {
             stopTimer()
@@ -153,10 +147,9 @@ final class TimeManager: ObservableObject {
         postStartTimer(activityID: profile.id)
     }
 
-    /// Sends a POST to the backend to start a Consume session.
-    /// **Does NOT update local state** — waits for WS broadcast.
+    /// POST start consume — guard zero balance.
     func startConsume(with profile: ActivityProfile) {
-        guard timeBalance > 0 else {
+        guard globalBalance > 0 else {
             showZeroBalanceError = true
             triggerHaptic(.rigid)
             return
@@ -169,8 +162,7 @@ final class TimeManager: ObservableObject {
         postStartTimer(activityID: profile.id)
     }
 
-    /// Sends a POST to the backend to stop the active session.
-    /// **Does NOT update local state** — waits for WS broadcast.
+    /// POST stop — no local state change, wait for WS.
     func stopTimer() {
         guard currentState != .idle else { return }
         triggerHaptic(.light)
@@ -179,7 +171,6 @@ final class TimeManager: ObservableObject {
 
     // MARK: - HTTP Requests
 
-    /// POST /api/timer/start?activityID=\(id)
     private func postStartTimer(activityID: String) {
         guard let url = URL(string: "\(APIConfig.timerStartURL)?activityID=\(activityID)") else { return }
         var request = URLRequest(url: url)
@@ -187,20 +178,17 @@ final class TimeManager: ObservableObject {
 
         isLoading = true
         URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            DispatchQueue.main.async {
-                self?.isLoading = false
-            }
+            DispatchQueue.main.async { self?.isLoading = false }
             if let error = error {
                 print("[API] Start error: \(error.localizedDescription)")
                 return
             }
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 204 {
-                print("[API] Start request accepted (204)")
+            if let http = response as? HTTPURLResponse, http.statusCode == 204 {
+                print("[API] Start accepted (204)")
             }
         }.resume()
     }
 
-    /// POST /api/timer/stop
     private func postStopTimer() {
         guard let url = URL(string: APIConfig.timerStopURL) else { return }
         var request = URLRequest(url: url)
@@ -208,31 +196,25 @@ final class TimeManager: ObservableObject {
 
         isLoading = true
         URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            DispatchQueue.main.async {
-                self?.isLoading = false
-            }
+            DispatchQueue.main.async { self?.isLoading = false }
             if let error = error {
                 print("[API] Stop error: \(error.localizedDescription)")
                 return
             }
-            if let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 204 {
-                print("[API] Stop request accepted (204)")
+            if let http = response as? HTTPURLResponse, http.statusCode == 204 {
+                print("[API] Stop accepted (204)")
             }
         }.resume()
     }
 
-    /// GET /api/activities — fetches activity profiles from the backend on launch.
     func fetchActivities() {
         guard let url = URL(string: APIConfig.activitiesURL) else { return }
 
         isLoading = true
-        URLSession.shared.dataTask(with: url) { [weak self] data, response, error in
-            DispatchQueue.main.async {
-                self?.isLoading = false
-            }
+        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
+            DispatchQueue.main.async { self?.isLoading = false }
             if let error = error {
                 print("[API] Fetch activities error: \(error.localizedDescription)")
-                // Fall back to local defaults
                 DispatchQueue.main.async {
                     if self?.activityProfiles.isEmpty == true {
                         self?.activityProfiles = ActivityProfile.allDefaults
@@ -240,19 +222,17 @@ final class TimeManager: ObservableObject {
                 }
                 return
             }
-
             guard let data = data else { return }
-
             do {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let profiles = try decoder.decode([ActivityProfile].self, from: data)
                 DispatchQueue.main.async {
                     self?.activityProfiles = profiles
-                    print("[API] Fetched \(profiles.count) activities from server")
+                    print("[API] Fetched \(profiles.count) activities")
                 }
             } catch {
-                print("[API] Decode activities error: \(error)")
+                print("[API] Decode error: \(error)")
                 DispatchQueue.main.async {
                     if self?.activityProfiles.isEmpty == true {
                         self?.activityProfiles = ActivityProfile.allDefaults
@@ -264,77 +244,67 @@ final class TimeManager: ObservableObject {
 
     // MARK: - WebSocket Event Handling
 
-    /// Subscribes to the WebSocket client's event stream and routes events.
     private func subscribeToWSEvents() {
         wsClient.eventSubject
             .receive(on: DispatchQueue.main)
-            .sink { [weak self] event in
-                self?.handleWSEvent(event)
-            }
+            .sink { [weak self] event in self?.handleWSEvent(event) }
             .store(in: &cancellables)
     }
 
-    /// Routes an incoming WebSocket event to the appropriate handler.
     private func handleWSEvent(_ event: WSEvent) {
         switch event.type {
         case WSEventType.timerStarted:
             handleTimerStarted(event.payload)
-
         case WSEventType.timerStopped:
             handleTimerStopped(event.payload)
-
         case WSEventType.balanceUpdated:
             handleBalanceUpdated(event.payload)
-
         default:
-            print("[WS] Unknown event type: \(event.type)")
+            print("[WS] Unknown event: \(event.type)")
         }
     }
 
-    /// Handles TIMER_STARTED: sets the local state to match the server.
+    // MARK: - TIMER_STARTED → Delta Engine Start
+
     private func handleTimerStarted(_ payload: [String: AnyCodable]) {
         guard let data = TimerStartedPayload(from: payload) else {
-            print("[WS] Failed to parse TIMER_STARTED payload")
+            print("[WS] Failed parse TIMER_STARTED")
             return
         }
 
+        // Store delta calc anchors
         activeSessionID = data.sessionID
         sessionStartTime = data.startTime
+        baseBalance = data.baseBalance
+        activeCategory = data.activityCategory == "consuming" ? .consuming : .toppingUp
 
-        // Find the matching profile
+        // Match profile
         activeProfile = activityProfiles.first { $0.id == data.activityID }
 
-        // Set local state based on category from server
-        switch data.activityCategory {
-        case "toppingUp":
-            currentState = .toppingUp
-            currentSessionTime = 0
-        case "consuming":
-            currentState = .consuming
-            currentSessionTime = timeBalance
-        default:
-            currentState = .toppingUp
-            currentSessionTime = 0
-        }
+        // Set state + initial values
+        currentState = activeCategory
+        currentSessionTime = 0
+        globalBalance = data.baseBalance
 
-        // Start local UI tick timer
-        startLocalTimer()
+        // Start delta tick timer
+        startDeltaTimer()
 
-        print("[WS] Timer started: \(data.activityName) (\(data.activityCategory))")
+        print("[WS] Started: \(data.activityName) (\(data.activityCategory)) base=\(data.baseBalance)")
     }
 
-    /// Handles TIMER_STOPPED: resets to idle and logs the session locally.
+    // MARK: - TIMER_STOPPED → Snap to Server Truth
+
     private func handleTimerStopped(_ payload: [String: AnyCodable]) {
         guard let data = TimerStoppedPayload(from: payload) else {
-            print("[WS] Failed to parse TIMER_STOPPED payload")
+            print("[WS] Failed parse TIMER_STOPPED")
             return
         }
 
-        // Stop the local tick timer
+        // Kill delta timer
         timerCancellable?.cancel()
         timerCancellable = nil
 
-        // Log the completed session locally
+        // Log session locally
         if data.duration > 0 {
             commitSession(
                 type: currentState,
@@ -343,49 +313,60 @@ final class TimeManager: ObservableObject {
             )
         }
 
+        // Reset everything
         cancelScheduledNotification()
         activeProfile = nil
         activeSessionID = nil
         sessionStartTime = nil
+        baseBalance = 0
+        activeCategory = .idle
         currentState = .idle
         currentSessionTime = 0
 
-        print("[WS] Timer stopped. Duration: \(data.duration)s, Credits: \(data.creditsEarned)")
+        print("[WS] Stopped. Duration: \(data.duration)s, Credits: \(data.creditsEarned)")
     }
 
-    /// Handles BALANCE_UPDATED: syncs timeBalance to the server's absolute value.
+    // MARK: - BALANCE_UPDATED → Absolute Snap
+
     private func handleBalanceUpdated(_ payload: [String: AnyCodable]) {
         guard let data = BalanceUpdatedPayload(from: payload) else {
-            print("[WS] Failed to parse BALANCE_UPDATED payload")
+            print("[WS] Failed parse BALANCE_UPDATED")
             return
         }
 
-        timeBalance = data.balance
-        print("[WS] Balance updated to \(data.balance) CR")
+        // Server truth corrects any local drift
+        globalBalance = data.balance
+        print("[WS] Balance snapped to \(data.balance) CR")
     }
 
-    // MARK: - Local UI Timer
+    // MARK: - Delta Calculation Timer
 
-    /// Starts a 1-second Combine timer to update the UI between WS broadcasts.
-    private func startLocalTimer() {
+    /// Ticks every 1s. Computes elapsed from sessionStartTime.
+    /// Updates both clocks: session elapsed + global CR pool.
+    private func startDeltaTimer() {
         timerCancellable?.cancel()
         timerCancellable = Timer
             .publish(every: 1.0, on: .main, in: .common)
             .autoconnect()
-            .sink { [weak self] _ in self?.localTick() }
+            .sink { [weak self] _ in self?.deltaTick() }
     }
 
-    /// Called every second to update the displayed session time.
-    private func localTick() {
-        switch currentState {
+    /// Core delta tick — single source of animated truth.
+    private func deltaTick() {
+        guard let start = sessionStartTime else { return }
+
+        let elapsed = Int(Date().timeIntervalSince(start))
+        currentSessionTime = elapsed
+
+        switch activeCategory {
         case .toppingUp:
-            currentSessionTime += 1
+            globalBalance = baseBalance + elapsed
 
         case .consuming:
-            currentSessionTime = max(currentSessionTime - 1, 0)
-            if currentSessionTime <= 0 {
-                // Balance exhausted — server will send TIMER_STOPPED
+            globalBalance = max(baseBalance - elapsed, 0)
+            if globalBalance <= 0 {
                 triggerHaptic(.heavy)
+                // Server will send TIMER_STOPPED when it detects expiry
             }
 
         case .idle:
@@ -395,49 +376,42 @@ final class TimeManager: ObservableObject {
 
     // MARK: - Background / Foreground Lifecycle
 
-    /// Called when the app goes to the background.
     func handleBackgrounded() {
-        // Pause the local UI timer (server continues tracking)
         timerCancellable?.cancel()
         timerCancellable = nil
 
-        // Schedule a notification if consuming
-        if currentState == .consuming && timeBalance > 0 {
-            scheduleConsumeExpiryNotification(secondsRemaining: currentSessionTime)
+        if currentState == .consuming && globalBalance > 0 {
+            scheduleConsumeExpiryNotification(secondsRemaining: globalBalance)
         }
 
-        // Disconnect WebSocket to save resources
         wsClient.disconnect()
     }
 
-    /// Called when the app returns to the foreground.
     func handleForegrounded() {
         cancelScheduledNotification()
-
-        // Reconnect WebSocket
         wsClient.connect()
-
-        // Refresh activities from server
         fetchActivities()
 
-        // If a session was active, recalculate elapsed time from sessionStartTime
-        if let startTime = sessionStartTime, currentState != .idle {
-            let elapsed = Int(Date().timeIntervalSince(startTime))
-            switch currentState {
+        // Recalculate from anchor if session active
+        if let start = sessionStartTime, currentState != .idle {
+            let elapsed = Int(Date().timeIntervalSince(start))
+            currentSessionTime = elapsed
+
+            switch activeCategory {
             case .toppingUp:
-                currentSessionTime = elapsed
+                globalBalance = baseBalance + elapsed
             case .consuming:
-                currentSessionTime = max(timeBalance - elapsed, 0)
+                globalBalance = max(baseBalance - elapsed, 0)
             case .idle:
                 break
             }
-            startLocalTimer()
+
+            startDeltaTimer()
         }
     }
 
     // MARK: - Session Logging
 
-    /// Saves a completed session to the persisted local log.
     private func commitSession(type: AppState, duration: Int, activityName: String) {
         guard duration > 0 else { return }
         let entry = SessionLog(
@@ -453,19 +427,17 @@ final class TimeManager: ObservableObject {
         }
     }
 
-    // MARK: - Haptic Feedback
+    // MARK: - Haptics
 
     private func triggerHaptic(_ style: UIImpactFeedbackGenerator.FeedbackStyle) {
-        let generator = UIImpactFeedbackGenerator(style: style)
-        generator.impactOccurred()
+        UIImpactFeedbackGenerator(style: style).impactOccurred()
     }
 
     private func triggerHaptic(_ type: UINotificationFeedbackGenerator.FeedbackType) {
-        let generator = UINotificationFeedbackGenerator()
-        generator.notificationOccurred(type)
+        UINotificationFeedbackGenerator().notificationOccurred(type)
     }
 
-    // MARK: - Local Notifications
+    // MARK: - Notifications
 
     private func requestNotificationPermission() {
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
