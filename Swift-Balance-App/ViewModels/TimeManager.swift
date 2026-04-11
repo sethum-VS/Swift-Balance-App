@@ -105,17 +105,7 @@ final class TimeManager: ObservableObject {
             .receive(on: DispatchQueue.main)
             .assign(to: &$isConnected)
 
-        networkMonitor.$isConnected
-            .dropFirst()
-            .receive(on: DispatchQueue.main)
-            .sink { [weak self] isOnline in
-                if isOnline {
-                    self?.syncOfflineData()
-                }
-            }
-            .store(in: &cancellables)
-
-        // Also sync when WS server becomes reachable
+        // Handle sync and state recovery when WS server becomes reachable
         wsClient.$isConnectedToServer
             .dropFirst()
             .receive(on: DispatchQueue.main)
@@ -279,7 +269,10 @@ final class TimeManager: ObservableObject {
     }
 
     private func syncOfflineData() {
-        guard !offlineQueue.isEmpty else { return }
+        guard !offlineQueue.isEmpty else {
+            fetchActivities()
+            return
+        }
         guard let url = URL(string: APIConfig.syncURL) else { return }
 
         var request = URLRequest(url: url)
