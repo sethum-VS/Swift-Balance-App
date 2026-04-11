@@ -47,6 +47,7 @@ struct OfflineSession: Codable, Identifiable {
     let activityID: String
     let duration: Int
     let creditsEarned: Int
+    let startTime: Date
     let timestamp: Date
 }
 

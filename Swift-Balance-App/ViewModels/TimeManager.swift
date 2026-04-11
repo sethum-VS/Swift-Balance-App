@@ -217,6 +217,7 @@ final class TimeManager: ObservableObject {
                 activityID: profile.id,
                 duration: duration,
                 creditsEarned: creditsEarned,
+                startTime: sessionStartTime ?? Date(),
                 timestamp: Date()
             )
             offlineQueue.append(offlineSession)
@@ -286,7 +287,9 @@ final class TimeManager: ObservableObject {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         do {
-            request.httpBody = try JSONEncoder().encode(offlineQueue)
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            request.httpBody = try encoder.encode(offlineQueue)
         } catch {
             return
         }
