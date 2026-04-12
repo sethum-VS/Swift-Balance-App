@@ -391,6 +391,7 @@ final class TimeManager: ObservableObject {
     }
 
     private func handleBalanceUpdated(_ payload: [String: AnyCodable]) {
+        guard offlineQueue.isEmpty else { return }
         guard let data = BalanceUpdatedPayload(from: payload) else { return }
         globalBalance = data.balance
     }
