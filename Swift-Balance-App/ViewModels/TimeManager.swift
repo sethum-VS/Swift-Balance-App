@@ -19,6 +19,7 @@ final class TimeManager: ObservableObject {
         static let globalBalance  = "balance_timeBalance"
         static let sessionLogs    = "balance_sessionLogs"
         static let offlineQueue   = "balance_offlineQueue"
+        static let offlineActivitiesQueue = "balance_offlineActivitiesQueue"
     }
 
     // MARK: - Published State (Dual Clock + Offline)
@@ -45,6 +46,14 @@ final class TimeManager: ObservableObject {
         didSet {
             if let encoded = try? JSONEncoder().encode(offlineQueue) {
                 UserDefaults.standard.set(encoded, forKey: Keys.offlineQueue)
+            }
+        }
+    }
+
+    @Published var offlineActivitiesQueue: [ActivityProfile] = [] {
+        didSet {
+            if let encoded = try? JSONEncoder().encode(offlineActivitiesQueue) {
+                UserDefaults.standard.set(encoded, forKey: Keys.offlineActivitiesQueue)
             }
         }
     }
@@ -98,6 +107,11 @@ final class TimeManager: ObservableObject {
             offlineQueue = decoded
         }
 
+        if let data = UserDefaults.standard.data(forKey: Keys.offlineActivitiesQueue),
+           let decoded = try? JSONDecoder().decode([ActivityProfile].self, from: data) {
+            offlineActivitiesQueue = decoded
+        }
+
         requestNotificationPermission()
         subscribeToWSEvents()
 
@@ -125,8 +139,26 @@ final class TimeManager: ObservableObject {
     var topUpProfiles: [ActivityProfile] { activityProfiles.filter { $0.category == .toppingUp } }
     var consumeProfiles: [ActivityProfile] { activityProfiles.filter { $0.category == .consuming } }
 
-    func addProfile(_ profile: ActivityProfile) { activityProfiles.append(profile) }
     func deleteProfile(id: String) { activityProfiles.removeAll { $0.id == id } }
+
+    func addActivity(name: String, category: String, iconName: String) {
+        let appCategory: AppState = category.lowercased() == "consuming" ? .consuming : .toppingUp
+        let profile = ActivityProfile(
+            id: UUID().uuidString,
+            name: name,
+            category: appCategory,
+            iconName: iconName,
+            creditPerHour: 60.0 // Default for custom activities
+        )
+        
+        activityProfiles.append(profile)
+        
+        if isBackendAvailable {
+            postActivity(profile)
+        } else {
+            offlineActivitiesQueue.append(profile)
+        }
+    }
 
     // MARK: - Session Actions
 
@@ -268,31 +300,72 @@ final class TimeManager: ObservableObject {
         }.resume()
     }
 
-    private func syncOfflineData() {
-        guard !offlineQueue.isEmpty else {
-            fetchActivities()
-            return
-        }
-        guard let url = URL(string: APIConfig.syncURL) else { return }
-
+    private func postActivity(_ profile: ActivityProfile) {
+        guard let url = URL(string: APIConfig.activitiesURL) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-
+        
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+        
         do {
+            request.httpBody = try encoder.encode(profile)
+        } catch { return }
+        
+        URLSession.shared.dataTask(with: request).resume()
+    }
+
+    private func syncOfflineData() {
+        Task {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
-            request.httpBody = try encoder.encode(offlineQueue)
-        } catch {
-            return
-        }
-
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            guard error == nil, let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
-            DispatchQueue.main.async {
-                self?.offlineQueue.removeAll()
+            
+            // Stage 1: Sync Activities
+            if !offlineActivitiesQueue.isEmpty {
+                guard let url = URL(string: APIConfig.activitiesSyncURL) else { return }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                
+                do {
+                    request.httpBody = try encoder.encode(offlineActivitiesQueue)
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        print("[Sync] Stage 1 failed. Aborting sync.")
+                        return
+                    }
+                    await MainActor.run { self.offlineActivitiesQueue.removeAll() }
+                } catch {
+                    print("[Sync] Stage 1 error: \(error). Aborting sync.")
+                    return
+                }
             }
-        }.resume()
+            
+            // Stage 2: Sync Sessions
+            if !offlineQueue.isEmpty {
+                guard let url = URL(string: APIConfig.syncURL) else { return }
+                var request = URLRequest(url: url)
+                request.httpMethod = "POST"
+                request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                
+                do {
+                    request.httpBody = try encoder.encode(offlineQueue)
+                    let (_, response) = try await URLSession.shared.data(for: request)
+                    guard let http = response as? HTTPURLResponse, http.statusCode == 200 else {
+                        print("[Sync] Stage 2 failed.")
+                        return
+                    }
+                    await MainActor.run { self.offlineQueue.removeAll() }
+                } catch {
+                    print("[Sync] Stage 2 error: \(error).")
+                    return
+                }
+            }
+            
+            // Stage 3: Fetch latest external state
+            await MainActor.run { self.fetchActivities() }
+        }
     }
 
     func fetchActivities() {

@@ -206,13 +206,11 @@ struct ConfigurationView: View {
                     // Save button (Pinned at bottom)
                     Button {
                         guard !newProfileName.trimmingCharacters(in: .whitespaces).isEmpty else { return }
-                        let profile = ActivityProfile(
-                            id: "local_\(UUID().uuidString.prefix(8))",
+                        timeManager.addActivity(
                             name: newProfileName.trimmingCharacters(in: .whitespaces),
-                            category: newProfileCategory,
+                            category: newProfileCategory == .consuming ? "consuming" : "toppingUp",
                             iconName: newProfileIcon
                         )
-                        timeManager.addProfile(profile)
                         newProfileName = ""
                         newProfileIcon = "star.fill"
                         showAddSheet = false

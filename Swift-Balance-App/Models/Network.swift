@@ -19,6 +19,7 @@ enum APIConfig {
     static let timerStartURL = "\(baseURL)/api/timer/start"
     static let timerStopURL  = "\(baseURL)/api/timer/stop"
     static let syncURL       = "\(baseURL)/api/sync"
+    static let activitiesSyncURL = "\(baseURL)/api/activities/sync"
 }
 
 // MARK: - WebSocket Event
