@@ -10,16 +10,17 @@ import Foundation
 // MARK: - API Configuration
 
 /// Central configuration for all backend endpoints.
+/// All URLs derived from `Config` environment toggle.
 enum APIConfig {
-    static let baseURL = "http://localhost:3000"
-    static let wsURL   = "ws://localhost:3000/ws"
+    static var baseURL: String { Config.apiBaseURL }
+    static var wsURL: String   { Config.wsBaseURL }
 
     // REST endpoints
-    static let activitiesURL = "\(baseURL)/api/activities"
-    static let timerStartURL = "\(baseURL)/api/timer/start"
-    static let timerStopURL  = "\(baseURL)/api/timer/stop"
-    static let syncURL       = "\(baseURL)/api/sync"
-    static let activitiesSyncURL = "\(baseURL)/api/activities/sync"
+    static var activitiesURL: String     { "\(baseURL)/api/activities" }
+    static var timerStartURL: String     { "\(baseURL)/api/timer/start" }
+    static var timerStopURL: String      { "\(baseURL)/api/timer/stop" }
+    static var syncURL: String           { "\(baseURL)/api/sync" }
+    static var activitiesSyncURL: String { "\(baseURL)/api/activities/sync" }
 }
 
 // MARK: - WebSocket Event
