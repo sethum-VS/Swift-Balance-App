@@ -20,7 +20,7 @@ enum Config {
     // ┌──────────────────────────────────────────────┐
     // │  FLIP THIS TO SWITCH ENVIRONMENTS            │
     // └──────────────────────────────────────────────┘
-    static let isProduction = false
+    static let isProduction = true
 
     // MARK: - Development (localhost)
 
@@ -29,8 +29,8 @@ enum Config {
 
     // MARK: - Production (Cloud Run)
 
-    private static let prodAPIBase = "https://your-cloud-run-url.com"
-    private static let prodWSBase  = "wss://your-cloud-run-url.com/ws"
+    private static let prodAPIBase = "https://balance-web-1047596610069.us-central1.run.app"
+    private static let prodWSBase  = "wss://balance-web-1047596610069.us-central1.run.app/ws"
 
     // MARK: - Computed Endpoints
 
