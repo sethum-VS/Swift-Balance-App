@@ -23,7 +23,7 @@ struct Swift_Balance_AppApp: App {
         }
         .onChange(of: scenePhase) { newPhase in
             switch newPhase {
-            case .background:
+            case .background, .inactive:
                 timeManager.handleBackgrounded()
             case .active:
                 timeManager.handleForegrounded()

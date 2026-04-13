@@ -506,6 +506,11 @@ final class TimeManager: ObservableObject {
     // MARK: - Background / Foreground Lifecycle
 
     func handleBackgrounded() {
+        // Guard: already suspended — inactive→background fires twice
+        guard wsClient.isConnected || timerCancellable != nil else { return }
+
+        print("[Lifecycle] App backgrounded — suspending socket & timer")
+
         timerCancellable?.cancel()
         timerCancellable = nil
 
@@ -517,6 +522,7 @@ final class TimeManager: ObservableObject {
     }
 
     func handleForegrounded() {
+        print("[Lifecycle] App foregrounded — reconnecting socket")
         cancelScheduledNotification()
         wsClient.connect()
         fetchActivities()
