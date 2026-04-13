@@ -39,6 +39,9 @@ final class WebSocketClient: ObservableObject {
     /// Prevents multiple concurrent reconnect attempts.
     private var isReconnecting: Bool = false
 
+    /// Combine-driven keep-alive ping timer.
+    private var pingCancellable: AnyCancellable?
+
     // MARK: - Init
 
     init(url: URL = URL(string: APIConfig.wsURL)!) {
@@ -64,11 +67,13 @@ final class WebSocketClient: ObservableObject {
 
         print("[WS] Connected to \(url.absoluteString)")
         receiveLoop()
-        schedulePing()
+        startPingTimer()
     }
 
     /// Gracefully closes the WebSocket connection.
     func disconnect() {
+        pingCancellable?.cancel()
+        pingCancellable = nil
         webSocketTask?.cancel(with: .goingAway, reason: nil)
         webSocketTask = nil
         isConnected = false
@@ -124,27 +129,38 @@ final class WebSocketClient: ObservableObject {
         }
     }
 
-    // MARK: - Keep-Alive Ping
+    // MARK: - Keep-Alive Ping (25s for Cloud Run)
 
-    /// Sends a ping every 30 seconds to keep the connection alive.
-    private func schedulePing() {
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 30) { [weak self] in
-            guard let self = self, self.isConnected else { return }
-            self.webSocketTask?.sendPing { error in
-                if let error = error {
-                    print("[WS] Ping failed: \(error.localizedDescription)")
-                    self.handleDisconnect()
-                } else {
-                    self.schedulePing()
+    /// Starts a Combine timer that sends a WebSocket ping every 25 seconds.
+    /// Keeps the Cloud Run load balancer from killing the idle connection.
+    private func startPingTimer() {
+        pingCancellable?.cancel()
+        pingCancellable = Timer
+            .publish(every: 25.0, on: .main, in: .common)
+            .autoconnect()
+            .sink { [weak self] _ in
+                guard let self = self, self.isConnected else {
+                    self?.pingCancellable?.cancel()
+                    self?.pingCancellable = nil
+                    return
+                }
+                self.webSocketTask?.sendPing { error in
+                    if let error = error {
+                        print("[WS] Ping failed: \(error.localizedDescription)")
+                        self.pingCancellable?.cancel()
+                        self.pingCancellable = nil
+                        self.handleDisconnect()
+                    }
                 }
             }
-        }
     }
 
     // MARK: - Reconnection
 
     /// Handles an unexpected disconnection and triggers reconnect.
     private func handleDisconnect() {
+        pingCancellable?.cancel()
+        pingCancellable = nil
         DispatchQueue.main.async {
             self.webSocketTask = nil
             self.isConnected = false
