@@ -8,6 +8,20 @@
 import Foundation
 import FirebaseAuth
 
+enum AuthTokenError: LocalizedError {
+    case userNotAuthenticated
+    case tokenUnavailable
+
+    var errorDescription: String? {
+        switch self {
+        case .userNotAuthenticated:
+            return "User is not authenticated."
+        case .tokenUnavailable:
+            return "Firebase ID token unavailable."
+        }
+    }
+}
+
 final class AuthManager: ObservableObject {
     @Published var isAuthenticated: Bool = false
     @Published var errorMessage: String?
@@ -66,5 +80,31 @@ final class AuthManager: ObservableObject {
         } catch {
             errorMessage = error.localizedDescription
         }
+    }
+
+    static func getIDToken() async throws -> String {
+        guard let user = Auth.auth().currentUser else {
+            throw AuthTokenError.userNotAuthenticated
+        }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            user.getIDToken { token, error in
+                if let error {
+                    continuation.resume(throwing: error)
+                    return
+                }
+
+                guard let token else {
+                    continuation.resume(throwing: AuthTokenError.tokenUnavailable)
+                    return
+                }
+
+                continuation.resume(returning: token)
+            }
+        }
+    }
+
+    func getIDToken() async throws -> String {
+        try await Self.getIDToken()
     }
 }

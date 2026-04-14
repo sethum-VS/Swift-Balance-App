@@ -30,7 +30,7 @@ final class WebSocketClient: ObservableObject {
 
     private var webSocketTask: URLSessionWebSocketTask?
     private let session: URLSession
-    private let url: URL
+    private let baseURL: String
 
     /// Controls reconnection backoff (seconds).
     private var reconnectDelay: TimeInterval = 1.0
@@ -44,8 +44,8 @@ final class WebSocketClient: ObservableObject {
 
     // MARK: - Init
 
-    init(url: URL = URL(string: APIConfig.wsURL)!) {
-        self.url = url
+    init(baseURL: String = Config.wsBaseURL) {
+        self.baseURL = baseURL
         self.session = URLSession(configuration: .default)
     }
 
@@ -55,19 +55,41 @@ final class WebSocketClient: ObservableObject {
     func connect() {
         guard webSocketTask == nil else { return }
 
-        var request = URLRequest(url: url)
-        request.setValue("iOS", forHTTPHeaderField: "X-Client-Type")
+        Task { [weak self] in
+            guard let self = self else { return }
 
-        webSocketTask = session.webSocketTask(with: request)
-        webSocketTask?.resume()
+            let token: String
+            do {
+                token = try await AuthManager.getIDToken()
+            } catch {
+                print("[WS] Token fetch failed: \(error.localizedDescription)")
+                return
+            }
 
-        isConnected = true
-        reconnectDelay = 1.0
-        isReconnecting = false
+            guard self.webSocketTask == nil else { return }
 
-        print("[WS] Connected to \(url.absoluteString)")
-        receiveLoop()
-        startPingTimer()
+            let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
+            let urlString = self.baseURL + "?token=\(encodedToken)"
+
+            guard let url = URL(string: urlString) else {
+                print("[WS] Invalid URL for connect")
+                return
+            }
+
+            var request = URLRequest(url: url)
+            request.setValue("iOS", forHTTPHeaderField: "X-Client-Type")
+
+            self.webSocketTask = self.session.webSocketTask(with: request)
+            self.webSocketTask?.resume()
+
+            self.isConnected = true
+            self.reconnectDelay = 1.0
+            self.isReconnecting = false
+
+            print("[WS] Connected to \(urlString)")
+            self.receiveLoop()
+            self.startPingTimer()
+        }
     }
 
     /// Gracefully closes the WebSocket connection.
