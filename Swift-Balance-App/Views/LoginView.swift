@@ -12,6 +12,7 @@ struct LoginView: View {
 
     @State private var email: String = ""
     @State private var password: String = ""
+    @State private var isSignUp: Bool = false
 
     @FocusState private var focusedField: Field?
 
@@ -24,125 +25,181 @@ struct LoginView: View {
         !email.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !password.isEmpty
     }
 
+    private var brandGradient: LinearGradient {
+        LinearGradient(
+            colors: [Color(hex: 0x00C9FF), Color(hex: 0x92FE9D)],
+            startPoint: .topLeading,
+            endPoint: .bottomTrailing
+        )
+    }
+
+    private var backgroundColor: Color {
+        Color(hex: 0x131313)
+    }
+
+    private var inputBackgroundColor: Color {
+        Color(hex: 0x1A1A1A)
+    }
+
     var body: some View {
         ZStack {
-            LinearGradient(
-                colors: [Color(hex: 0x0B1020), Color(hex: 0x161B33), Color(hex: 0x0B1020)],
-                startPoint: .topLeading,
-                endPoint: .bottomTrailing
-            )
-            .ignoresSafeArea()
+            backgroundColor
+                .ignoresSafeArea()
 
-            VStack(spacing: 28) {
-                VStack(spacing: 10) {
-                    Image(systemName: "lock.shield.fill")
-                        .font(.system(size: 34, weight: .semibold))
-                        .foregroundStyle(Color(hex: 0x7FD8FF))
-                        .padding(14)
-                        .background(
-                            Circle()
-                                .fill(Color.white.opacity(0.08))
-                        )
+            VStack(spacing: 0) {
+                Spacer(minLength: 20)
 
-                    Text("Welcome Back")
-                        .font(.system(size: 32, weight: .bold, design: .rounded))
-                        .foregroundStyle(.white)
+                VStack(spacing: 24) {
+                    VStack(spacing: 14) {
+                        RoundedRectangle(cornerRadius: 16, style: .continuous)
+                            .fill(brandGradient)
+                            .frame(width: 80, height: 80)
+                            .overlay {
+                                Image(systemName: "bolt.fill")
+                                    .font(.system(size: 34, weight: .bold))
+                                    .foregroundStyle(Color(hex: 0x131313))
+                            }
+                            .shadow(color: Color(hex: 0x00C9FF, alpha: 0.30), radius: 16, x: 0, y: 8)
 
-                    Text("Sign in to continue your balance tracking")
-                        .font(.subheadline)
-                        .foregroundStyle(.white.opacity(0.6))
-                }
+                        Text("Balance")
+                            .font(.system(size: 34, weight: .bold, design: .rounded))
+                            .foregroundStyle(.white)
 
-                VStack(spacing: 14) {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Email")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.6))
+                        Text(isSignUp ? "Create your account" : "Sign in to your dashboard")
+                            .font(.subheadline)
+                            .foregroundStyle(.white.opacity(0.68))
+                            .multilineTextAlignment(.center)
+                    }
 
-                        TextField("name@example.com", text: $email)
-                            .textInputAutocapitalization(.never)
-                            .autocorrectionDisabled()
+                    VStack(spacing: 12) {
+                        TextField("Email", text: $email)
                             .keyboardType(.emailAddress)
+                            .textContentType(.emailAddress)
+                            .autocorrectionDisabled()
+                            .autocapitalization(.none)
+                            .textInputAutocapitalization(.never)
                             .submitLabel(.next)
                             .focused($focusedField, equals: .email)
                             .onSubmit { focusedField = .password }
                             .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
+                            .padding(.vertical, 13)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
+                                    .fill(inputBackgroundColor)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
                             )
                             .foregroundStyle(.white)
-                    }
 
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Password")
-                            .font(.caption.weight(.semibold))
-                            .foregroundStyle(.white.opacity(0.6))
-
-                        SecureField("Enter your password", text: $password)
+                        SecureField("Password", text: $password)
+                            .textContentType(.password)
+                            .autocapitalization(.none)
                             .textInputAutocapitalization(.never)
                             .submitLabel(.go)
                             .focused($focusedField, equals: .password)
-                            .onSubmit {
-                                if isFormValid && !authManager.isLoading {
-                                    authManager.signIn(email: email, password: password)
-                                }
-                            }
+                            .onSubmit { submitAuth() }
                             .padding(.horizontal, 14)
-                            .padding(.vertical, 12)
+                            .padding(.vertical, 13)
                             .background(
                                 RoundedRectangle(cornerRadius: 12, style: .continuous)
-                                    .fill(Color.white.opacity(0.08))
+                                    .fill(inputBackgroundColor)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                    .stroke(Color.white.opacity(0.10), lineWidth: 1)
                             )
                             .foregroundStyle(.white)
                     }
-                }
 
-                if let error = authManager.errorMessage {
-                    Text(error)
-                        .font(.footnote.weight(.medium))
-                        .foregroundStyle(Color(hex: 0xFF8E8E))
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 8)
+                    if let error = authManager.errorMessage {
+                        Text(error)
+                            .font(.footnote.weight(.medium))
+                            .foregroundStyle(Color(hex: 0xFF8E8E))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 4)
+                    }
+
+                    Button(action: submitAuth) {
+                        HStack(spacing: 10) {
+                            if authManager.isLoading {
+                                ProgressView()
+                                    .progressViewStyle(.circular)
+                                    .tint(Color(hex: 0x131313))
+                            }
+
+                            Text(buttonTitle)
+                                .font(.system(size: 16, weight: .bold, design: .rounded))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 14)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(brandGradient)
+                        )
+                        .foregroundStyle(Color(hex: 0x131313))
+                        .shadow(color: Color(hex: 0x92FE9D, alpha: 0.25), radius: 12, x: 0, y: 6)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(authManager.isLoading || !isFormValid)
+                    .opacity(authManager.isLoading || !isFormValid ? 0.50 : 1.0)
                 }
+                .padding(.horizontal, 24)
+                .padding(.vertical, 28)
+                .frame(maxWidth: 420)
+                .background(
+                    RoundedRectangle(cornerRadius: 24, style: .continuous)
+                        .fill(Color(hex: 0x171717))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 24, style: .continuous)
+                                .stroke(Color.white.opacity(0.08), lineWidth: 1)
+                        )
+                )
+                .shadow(color: Color.black.opacity(0.35), radius: 20, x: 0, y: 10)
+                .padding(.horizontal, 20)
+
+                Spacer(minLength: 18)
 
                 Button {
-                    authManager.signIn(email: email, password: password)
-                } label: {
-                    HStack(spacing: 10) {
-                        if authManager.isLoading {
-                            ProgressView()
-                                .progressViewStyle(.circular)
-                                .tint(.black)
-                        }
-                        Text(authManager.isLoading ? "Signing In..." : "Sign In")
-                            .font(.system(size: 16, weight: .semibold, design: .rounded))
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        isSignUp.toggle()
                     }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 14)
-                    .background(
-                        RoundedRectangle(cornerRadius: 14, style: .continuous)
-                            .fill(
-                                LinearGradient(
-                                    colors: [Color(hex: 0x7FD8FF), Color(hex: 0x66F3CB)],
-                                    startPoint: .leading,
-                                    endPoint: .trailing
-                                )
-                            )
-                    )
-                    .foregroundStyle(.black)
+                    authManager.errorMessage = nil
+                } label: {
+                    Text(isSignUp ? "Already have an account? Sign in" : "Don't have an account? Sign up")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(Color(hex: 0x92FE9D))
+                        .padding(.vertical, 10)
                 }
-                .disabled(authManager.isLoading || !isFormValid)
-                .opacity(authManager.isLoading || !isFormValid ? 0.5 : 1.0)
-
-                Spacer()
+                .buttonStyle(.plain)
+                .padding(.bottom, 24)
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 40)
-            .padding(.bottom, 24)
+        }
+        .onTapGesture {
+            focusedField = nil
         }
         .preferredColorScheme(.dark)
+    }
+
+    private var buttonTitle: String {
+        if authManager.isLoading {
+            return isSignUp ? "Signing Up..." : "Signing In..."
+        }
+        return isSignUp ? "Sign Up" : "Sign In"
+    }
+
+    private func submitAuth() {
+        guard isFormValid, !authManager.isLoading else { return }
+        focusedField = nil
+
+        if isSignUp {
+            Task {
+                await authManager.signUp(email: email, password: password)
+            }
+        } else {
+            authManager.signIn(email: email, password: password)
+        }
     }
 }
 

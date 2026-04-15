@@ -73,6 +73,31 @@ final class AuthManager: ObservableObject {
         }
     }
 
+    @MainActor
+    func signUp(email: String, password: String) async {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty, !password.isEmpty else {
+            errorMessage = "Email and password are required."
+            return
+        }
+
+        errorMessage = nil
+        isLoading = true
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            _ = try await Auth.auth().createUser(withEmail: trimmedEmail, password: password)
+            isAuthenticated = true
+            errorMessage = nil
+        } catch {
+            isAuthenticated = false
+            errorMessage = error.localizedDescription
+        }
+    }
+
     func signOut() {
         do {
             try Auth.auth().signOut()
