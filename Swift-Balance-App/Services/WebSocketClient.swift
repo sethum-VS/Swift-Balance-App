@@ -7,6 +7,7 @@
 
 import Foundation
 import Combine
+import FirebaseAuth
 
 /// A robust WebSocket client using `URLSessionWebSocketTask`.
 ///
@@ -54,6 +55,12 @@ final class WebSocketClient: ObservableObject {
     /// Opens the WebSocket connection and starts the receive loop.
     func connect() {
         guard webSocketTask == nil else { return }
+
+        guard let currentUser = Auth.auth().currentUser else {
+            print("[WS] Connection aborted: User session not ready.")
+            return
+        }
+        _ = currentUser
 
         Task { [weak self] in
             guard let self = self else { return }

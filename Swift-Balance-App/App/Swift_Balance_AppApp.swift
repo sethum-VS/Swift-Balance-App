@@ -8,21 +8,28 @@
 import SwiftUI
 import Combine
 import FirebaseCore
+import UIKit
+
+final class AppDelegate: NSObject, UIApplicationDelegate {
+    func application(
+        _ application: UIApplication,
+        didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
+    ) -> Bool {
+        FirebaseApp.configure()
+        return true
+    }
+}
 
 @main
 struct Swift_Balance_AppApp: App {
+    @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
+
     /// Single source of truth — injected into the environment for every child view.
     @StateObject private var timeManager = TimeManager()
     @StateObject private var authManager = AuthManager()
 
     /// Monitors scene lifecycle changes to pause/resume the timer appropriately.
     @Environment(\.scenePhase) private var scenePhase
-
-    init() {
-        if FirebaseApp.app() == nil {
-            FirebaseApp.configure()
-        }
-    }
 
     var body: some Scene {
         WindowGroup {
