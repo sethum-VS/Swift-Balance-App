@@ -34,7 +34,7 @@ struct Swift_Balance_AppApp: App {
     var body: some Scene {
         WindowGroup {
             if authManager.isAuthenticated {
-                DashboardView()
+                ContentView()
                     .environmentObject(timeManager)
                     .environmentObject(authManager)
             } else {
