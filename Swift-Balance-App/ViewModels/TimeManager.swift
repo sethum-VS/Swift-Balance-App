@@ -354,7 +354,10 @@ final class TimeManager: ObservableObject {
 
     @discardableResult
     private func postActivityToBackend(_ profile: ActivityProfile, isSeedUpload: Bool = false) async -> Bool {
-        guard let url = URL(string: APIConfig.activitiesURL) else { return false }
+        guard let url = URL(string: APIConfig.activitiesURL) else {
+            print("[Seed Debug] Invalid URL: \(APIConfig.activitiesURL)")
+            return false
+        }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
 
@@ -371,10 +374,21 @@ final class TimeManager: ObservableObject {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
 
+        let createPayload = ActivityProfileCreateRequest(from: profile)
+
         do {
-            request.httpBody = try encoder.encode(profile)
+            request.httpBody = try encoder.encode(createPayload)
         } catch {
+            print("[Seed Debug] Failed to encode create payload: \(error.localizedDescription)")
             return false
+        }
+
+        print("[Seed Debug] URL: \(request.url?.absoluteString ?? "nil")")
+        if let body = request.httpBody,
+           let payloadString = String(data: body, encoding: .utf8) {
+            print("[Seed Debug] Payload: \(payloadString)")
+        } else {
+            print("[Seed Debug] Payload: nil")
         }
 
         do {
@@ -388,6 +402,8 @@ final class TimeManager: ObservableObject {
                 }
                 return false
             }
+
+            print("[Seed Debug] Response code: \(httpResponse.statusCode)")
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let serverMessage = String(data: data, encoding: .utf8) ?? "No response body"
@@ -404,7 +420,7 @@ final class TimeManager: ObservableObject {
             }
             return true
         } catch {
-            print("[API] Activity upload failed: \(error.localizedDescription)")
+            print("[Seed Debug] URLSession failed: \(error.localizedDescription)")
             return false
         }
     }
