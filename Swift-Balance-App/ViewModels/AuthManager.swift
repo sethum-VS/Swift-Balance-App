@@ -99,12 +99,11 @@ final class AuthManager: ObservableObject {
     }
 
     func signOut() {
-        do {
-            try Auth.auth().signOut()
+        if (try? Auth.auth().signOut()) != nil {
             isAuthenticated = false
             errorMessage = nil
-        } catch {
-            errorMessage = error.localizedDescription
+        } else {
+            errorMessage = "Failed to sign out."
         }
     }
 
