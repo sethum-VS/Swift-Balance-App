@@ -103,7 +103,8 @@ final class WebSocketClient: ObservableObject {
     func disconnect() {
         pingCancellable?.cancel()
         pingCancellable = nil
-        webSocketTask?.cancel(with: .goingAway, reason: nil)
+        webSocketTask?.cancel(with: .normalClosure, reason: nil)
+        print("[WS] Connection explicitly closed due to sign-out.")
         webSocketTask = nil
         isConnected = false
         isConnectedToServer = false
