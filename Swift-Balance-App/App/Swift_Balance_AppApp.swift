@@ -25,11 +25,18 @@ struct Swift_Balance_AppApp: App {
     @UIApplicationDelegateAdaptor(AppDelegate.self) var delegate
 
     /// Single source of truth — injected into the environment for every child view.
-    @StateObject private var timeManager = TimeManager()
+    @StateObject private var webSocketClient: WebSocketClient
+    @StateObject private var timeManager: TimeManager
     @StateObject private var authManager = AuthManager()
 
     /// Monitors scene lifecycle changes to pause/resume the timer appropriately.
     @Environment(\.scenePhase) private var scenePhase
+
+    init() {
+        let socket = WebSocketClient()
+        _webSocketClient = StateObject(wrappedValue: socket)
+        _timeManager = StateObject(wrappedValue: TimeManager(wsClient: socket))
+    }
 
     var body: some Scene {
         WindowGroup {
@@ -50,6 +57,20 @@ struct Swift_Balance_AppApp: App {
                 timeManager.handleForegrounded()
             default:
                 break
+            }
+        }
+        .onChange(of: authManager.isAuthenticated) { isAuthenticated in
+            if isAuthenticated {
+                webSocketClient.connect()
+            } else {
+                webSocketClient.disconnect()
+            }
+        }
+        .onAppear {
+            if authManager.isAuthenticated {
+                webSocketClient.connect()
+            } else {
+                webSocketClient.disconnect()
             }
         }
     }
