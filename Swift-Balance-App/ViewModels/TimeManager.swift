@@ -353,11 +353,10 @@ final class TimeManager: ObservableObject {
     }
 
     @discardableResult
-    private func postActivityToBackend(_ profile: ActivityProfile) async -> Bool {
+    private func postActivityToBackend(_ profile: ActivityProfile, isSeedUpload: Bool = false) async -> Bool {
         guard let url = URL(string: APIConfig.activitiesURL) else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         do {
             let token = try await AuthManager.getIDToken()
@@ -366,6 +365,8 @@ final class TimeManager: ObservableObject {
             print("[API] Activity token fetch failed: \(error.localizedDescription)")
             return false
         }
+
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
@@ -377,7 +378,30 @@ final class TimeManager: ObservableObject {
         }
 
         do {
-            _ = try await URLSession.shared.data(for: request)
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                if isSeedUpload {
+                    print("[Network] Seed upload failed: invalid HTTP response.")
+                } else {
+                    print("[Network] Activity upload failed: invalid HTTP response.")
+                }
+                return false
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let serverMessage = String(data: data, encoding: .utf8) ?? "No response body"
+                if isSeedUpload {
+                    print("[Network] Seed upload failed with status \(httpResponse.statusCode): \(serverMessage)")
+                } else {
+                    print("[Network] Activity upload failed with status \(httpResponse.statusCode): \(serverMessage)")
+                }
+                return false
+            }
+
+            if isSeedUpload {
+                print("[Network] Successfully seeded activity.")
+            }
             return true
         } catch {
             print("[API] Activity upload failed: \(error.localizedDescription)")
@@ -403,7 +427,7 @@ final class TimeManager: ObservableObject {
             if profileToSeed.creditPerHour == nil && profileToSeed.category == .toppingUp {
                 profileToSeed.creditPerHour = 60.0
             }
-            _ = await postActivityToBackend(profileToSeed)
+            _ = await postActivityToBackend(profileToSeed, isSeedUpload: true)
         }
     }
 
