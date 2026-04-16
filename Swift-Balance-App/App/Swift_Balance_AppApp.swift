@@ -40,13 +40,29 @@ struct Swift_Balance_AppApp: App {
 
     var body: some Scene {
         WindowGroup {
-            if authManager.isAuthenticated {
-                ContentView()
-                    .environmentObject(timeManager)
-                    .environmentObject(authManager)
-            } else {
-                LoginView()
-                    .environmentObject(authManager)
+            Group {
+                if authManager.isAuthenticated {
+                    ContentView()
+                        .environmentObject(timeManager)
+                        .environmentObject(authManager)
+                } else {
+                    LoginView()
+                        .environmentObject(authManager)
+                }
+            }
+            .onChange(of: authManager.isAuthenticated) { isAuthenticated in
+                if isAuthenticated {
+                    webSocketClient.connect()
+                } else {
+                    webSocketClient.disconnect()
+                }
+            }
+            .onAppear {
+                if authManager.isAuthenticated {
+                    webSocketClient.connect()
+                } else {
+                    webSocketClient.disconnect()
+                }
             }
         }
         .onChange(of: scenePhase) { newPhase in
@@ -57,20 +73,6 @@ struct Swift_Balance_AppApp: App {
                 timeManager.handleForegrounded()
             default:
                 break
-            }
-        }
-        .onChange(of: authManager.isAuthenticated) { isAuthenticated in
-            if isAuthenticated {
-                webSocketClient.connect()
-            } else {
-                webSocketClient.disconnect()
-            }
-        }
-        .onAppear {
-            if authManager.isAuthenticated {
-                webSocketClient.connect()
-            } else {
-                webSocketClient.disconnect()
             }
         }
     }
