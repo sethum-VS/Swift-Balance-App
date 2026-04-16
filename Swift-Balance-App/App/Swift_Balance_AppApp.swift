@@ -53,13 +53,7 @@ struct Swift_Balance_AppApp: App {
             .onChange(of: authManager.isAuthenticated) { isAuthenticated in
                 if isAuthenticated {
                     webSocketClient.connect()
-                } else {
-                    webSocketClient.disconnect()
-                }
-            }
-            .onAppear {
-                if authManager.isAuthenticated {
-                    webSocketClient.connect()
+                    timeManager.fetchActivities()
                 } else {
                     webSocketClient.disconnect()
                 }

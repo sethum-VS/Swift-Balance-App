@@ -138,9 +138,6 @@ final class TimeManager: ObservableObject {
                 }
             }
             .store(in: &cancellables)
-
-        wsClient.connect()
-        fetchActivities()
     }
 
     // MARK: - Profile Helpers
@@ -355,7 +352,9 @@ final class TimeManager: ObservableObject {
     @discardableResult
     private func postActivityToBackend(_ profile: ActivityProfile, isSeedUpload: Bool = false) async -> Bool {
         guard let url = URL(string: APIConfig.activitiesURL) else {
-            print("[Seed Debug] Invalid URL: \(APIConfig.activitiesURL)")
+            if isSeedUpload {
+                print("[Seed Debug] Invalid URL: \(APIConfig.activitiesURL)")
+            }
             return false
         }
         var request = URLRequest(url: url)
@@ -374,21 +373,23 @@ final class TimeManager: ObservableObject {
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
 
-        let createPayload = ActivityProfileCreateRequest(from: profile)
-
         do {
-            request.httpBody = try encoder.encode(createPayload)
+            request.httpBody = try encoder.encode(profile)
         } catch {
-            print("[Seed Debug] Failed to encode create payload: \(error.localizedDescription)")
+            if isSeedUpload {
+                print("[Seed Debug] Failed to encode payload: \(error.localizedDescription)")
+            }
             return false
         }
 
-        print("[Seed Debug] URL: \(request.url?.absoluteString ?? "nil")")
-        if let body = request.httpBody,
-           let payloadString = String(data: body, encoding: .utf8) {
-            print("[Seed Debug] Payload: \(payloadString)")
-        } else {
-            print("[Seed Debug] Payload: nil")
+        if isSeedUpload {
+            print("[Seed Debug] URL: \(request.url?.absoluteString ?? "nil")")
+            if let body = request.httpBody,
+               let payloadString = String(data: body, encoding: .utf8) {
+                print("[Seed Debug] Payload: \(payloadString)")
+            } else {
+                print("[Seed Debug] Payload: nil")
+            }
         }
 
         do {
@@ -403,7 +404,9 @@ final class TimeManager: ObservableObject {
                 return false
             }
 
-            print("[Seed Debug] Response code: \(httpResponse.statusCode)")
+            if isSeedUpload {
+                print("[Seed Debug] Response code: \(httpResponse.statusCode)")
+            }
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let serverMessage = String(data: data, encoding: .utf8) ?? "No response body"
@@ -420,7 +423,11 @@ final class TimeManager: ObservableObject {
             }
             return true
         } catch {
-            print("[Seed Debug] URLSession failed: \(error.localizedDescription)")
+            if isSeedUpload {
+                print("[Seed Debug] URLSession failed: \(error.localizedDescription)")
+            } else {
+                print("[API] Activity upload failed: \(error.localizedDescription)")
+            }
             return false
         }
     }
@@ -437,14 +444,19 @@ final class TimeManager: ObservableObject {
         UserDefaults.standard.set(true, forKey: initialActivitiesFetchKey(for: userID))
     }
 
-    func seedDefaultActivities() async {
+    @discardableResult
+    func seedDefaultActivities() async -> Bool {
+        var uploadedAny = false
         for defaultProfile in ActivityProfile.allDefaults {
             var profileToSeed = defaultProfile
             if profileToSeed.creditPerHour == nil && profileToSeed.category == .toppingUp {
                 profileToSeed.creditPerHour = 60.0
             }
-            _ = await postActivityToBackend(profileToSeed, isSeedUpload: true)
+            if await postActivityToBackend(profileToSeed, isSeedUpload: true) {
+                uploadedAny = true
+            }
         }
+        return uploadedAny
     }
 
     private func syncOfflineData() {
@@ -539,29 +551,34 @@ final class TimeManager: ObservableObject {
                 let isInitialFetch: Bool
                 if let userID {
                     isInitialFetch = !hasCompletedInitialActivitiesFetch(for: userID)
-                    if isInitialFetch {
-                        markInitialActivitiesFetchCompleted(for: userID)
-                    }
                 } else {
                     isInitialFetch = false
                 }
 
                 let shouldSeedDefaults = profiles.isEmpty && isInitialFetch && looksLikeFreshLocalState
                 if shouldSeedDefaults {
-                    await seedDefaultActivities()
+                    let uploadedAny = await seedDefaultActivities()
                     activityProfiles = ActivityProfile.allDefaults
 
-                    do {
-                        let (seededData, _) = try await URLSession.shared.data(for: request)
-                        let seededProfiles = try decoder.decode([ActivityProfile].self, from: seededData)
-                        if !seededProfiles.isEmpty {
-                            activityProfiles = seededProfiles
+                    if uploadedAny {
+                        do {
+                            let (seededData, _) = try await URLSession.shared.data(for: request)
+                            let seededProfiles = try decoder.decode([ActivityProfile].self, from: seededData)
+                            if !seededProfiles.isEmpty {
+                                activityProfiles = seededProfiles
+                                if let userID {
+                                    markInitialActivitiesFetchCompleted(for: userID)
+                                }
+                            }
+                        } catch {
+                            // Keep optimistic local defaults if refresh fails.
                         }
-                    } catch {
-                        // Keep optimistic local defaults if refresh fails.
                     }
                 } else {
                     activityProfiles = profiles
+                    if !profiles.isEmpty, isInitialFetch, let userID {
+                        markInitialActivitiesFetchCompleted(for: userID)
+                    }
                 }
             } catch {
                 if activityProfiles.isEmpty {
@@ -693,6 +710,11 @@ final class TimeManager: ObservableObject {
     }
 
     func handleForegrounded() {
+        guard Auth.auth().currentUser != nil else {
+            wsClient.disconnect()
+            return
+        }
+
         print("[Lifecycle] App foregrounded — reconnecting socket")
         cancelScheduledNotification()
         wsClient.connect()

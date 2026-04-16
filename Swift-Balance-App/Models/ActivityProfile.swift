@@ -75,26 +75,3 @@ struct ActivityProfile: Codable, Identifiable, Hashable {
     /// All factory defaults combined.
     static let allDefaults: [ActivityProfile] = defaultTopUp + defaultConsume
 }
-
-/// Payload for creating new activities.
-/// The backend generates IDs and timestamps, so create calls should not send them.
-struct ActivityProfileCreateRequest: Codable {
-    var name: String
-    var category: AppState
-    var iconName: String
-    var creditPerHour: Double?
-
-    enum CodingKeys: String, CodingKey {
-        case name
-        case category
-        case iconName = "icon_name"
-        case creditPerHour = "credit_per_hour"
-    }
-
-    init(from profile: ActivityProfile) {
-        self.name = profile.name
-        self.category = profile.category
-        self.iconName = profile.iconName
-        self.creditPerHour = profile.creditPerHour
-    }
-}
