@@ -6,6 +6,12 @@
 	objectVersion = 77;
 	objects = {
 
+/* Begin PBXBuildFile section */
+		4A0155902F8E641E000AD114 /* FirebaseAnalytics in Frameworks */ = {isa = PBXBuildFile; productRef = 4A01558F2F8E641E000AD114 /* FirebaseAnalytics */; };
+		4A0155922F8E641E000AD114 /* FirebaseAuth in Frameworks */ = {isa = PBXBuildFile; productRef = 4A0155912F8E641E000AD114 /* FirebaseAuth */; };
+		4A0155942F8E641E000AD114 /* FirebaseCore in Frameworks */ = {isa = PBXBuildFile; productRef = 4A0155932F8E641E000AD114 /* FirebaseCore */; };
+/* End PBXBuildFile section */
+
 /* Begin PBXFileReference section */
 		4AA5D05C2F8570AA00269C04 /* Swift-Balance-App.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = "Swift-Balance-App.app"; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
@@ -23,6 +29,9 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4A0155902F8E641E000AD114 /* FirebaseAnalytics in Frameworks */,
+				4A0155942F8E641E000AD114 /* FirebaseCore in Frameworks */,
+				4A0155922F8E641E000AD114 /* FirebaseAuth in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -65,6 +74,9 @@
 			);
 			name = "Swift-Balance-App";
 			packageProductDependencies = (
+				4A01558F2F8E641E000AD114 /* FirebaseAnalytics */,
+				4A0155912F8E641E000AD114 /* FirebaseAuth */,
+				4A0155932F8E641E000AD114 /* FirebaseCore */,
 			);
 			productName = "Swift-Balance-App";
 			productReference = 4AA5D05C2F8570AA00269C04 /* Swift-Balance-App.app */;
@@ -94,6 +106,9 @@
 			);
 			mainGroup = 4AA5D0532F8570AA00269C04;
 			minimizedProjectReferenceProxies = 1;
+			packageReferences = (
+				4A01558E2F8E641E000AD114 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */,
+			);
 			preferredProjectObjectVersion = 77;
 			productRefGroup = 4AA5D05D2F8570AA00269C04 /* Products */;
 			projectDirPath = "";
@@ -336,6 +351,35 @@
 			defaultConfigurationName = Release;
 		};
 /* End XCConfigurationList section */
+
+/* Begin XCRemoteSwiftPackageReference section */
+		4A01558E2F8E641E000AD114 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */ = {
+			isa = XCRemoteSwiftPackageReference;
+			repositoryURL = "https://github.com/firebase/firebase-ios-sdk";
+			requirement = {
+				kind = upToNextMajorVersion;
+				minimumVersion = 12.12.0;
+			};
+		};
+/* End XCRemoteSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		4A01558F2F8E641E000AD114 /* FirebaseAnalytics */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4A01558E2F8E641E000AD114 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAnalytics;
+		};
+		4A0155912F8E641E000AD114 /* FirebaseAuth */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4A01558E2F8E641E000AD114 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseAuth;
+		};
+		4A0155932F8E641E000AD114 /* FirebaseCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4A01558E2F8E641E000AD114 /* XCRemoteSwiftPackageReference "firebase-ios-sdk" */;
+			productName = FirebaseCore;
+		};
+/* End XCSwiftPackageProductDependency section */
 	};
 	rootObject = 4AA5D0542F8570AA00269C04 /* Project object */;
 }

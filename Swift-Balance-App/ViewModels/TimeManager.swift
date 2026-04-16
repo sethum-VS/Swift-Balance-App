@@ -9,6 +9,7 @@ import Foundation
 import Combine
 import UIKit
 import UserNotifications
+import FirebaseAuth
 
 /// Core ViewModel — dual-clock delta calculation engine with Offline Sync Support.
 final class TimeManager: ObservableObject {
@@ -129,9 +130,6 @@ final class TimeManager: ObservableObject {
                 }
             }
             .store(in: &cancellables)
-
-        wsClient.connect()
-        fetchActivities()
     }
 
     // MARK: - Profile Helpers
@@ -170,7 +168,13 @@ final class TimeManager: ObservableObject {
         triggerHaptic(.medium)
         
         if isBackendAvailable {
-            postStartTimer(activityID: profile.id, fallbackProfile: profile, fallbackCategory: .toppingUp)
+            Task { [weak self] in
+                await self?.postStartTimer(
+                    activityID: profile.id,
+                    fallbackProfile: profile,
+                    fallbackCategory: .toppingUp
+                )
+            }
         } else {
             startLocalOfflineSession(profile: profile, category: .toppingUp)
         }
@@ -189,7 +193,13 @@ final class TimeManager: ObservableObject {
         triggerHaptic(.medium)
         
         if isBackendAvailable {
-            postStartTimer(activityID: profile.id, fallbackProfile: profile, fallbackCategory: .consuming)
+            Task { [weak self] in
+                await self?.postStartTimer(
+                    activityID: profile.id,
+                    fallbackProfile: profile,
+                    fallbackCategory: .consuming
+                )
+            }
         } else {
             startLocalOfflineSession(profile: profile, category: .consuming)
         }
@@ -200,7 +210,9 @@ final class TimeManager: ObservableObject {
         triggerHaptic(.light)
         
         if isBackendAvailable {
-            postStopTimer()
+            Task { [weak self] in
+                await self?.postStopTimer()
+            }
         } else {
             stopLocalOfflineSession()
         }
@@ -264,62 +276,129 @@ final class TimeManager: ObservableObject {
     // MARK: - HTTP Requests
 
     /// POST start with REST fallback → offline if server unreachable.
-    private func postStartTimer(activityID: String, fallbackProfile: ActivityProfile, fallbackCategory: AppState) {
+    private func postStartTimer(activityID: String, fallbackProfile: ActivityProfile, fallbackCategory: AppState) async {
         guard let url = URL(string: "\(APIConfig.timerStartURL)?activityID=\(activityID)") else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.timeoutInterval = 5
+        
+        do {
+            let token = try await AuthManager.getIDToken()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } catch {
+            print("[API] Start token fetch failed: \(error.localizedDescription) — falling back to offline")
+            startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
+            return
+        }
 
         isLoading = true
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            DispatchQueue.main.async { self?.isLoading = false }
-            if error != nil {
-                print("[API] Start failed — falling back to offline")
-                DispatchQueue.main.async {
-                    self?.startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
-                }
-                return
-            }
+        defer { isLoading = false }
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
             if let http = response as? HTTPURLResponse, http.statusCode != 204 {
                 print("[API] Start rejected (\(http.statusCode)) — falling back to offline")
-                DispatchQueue.main.async {
-                    self?.startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
-                }
+                startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
             }
-        }.resume()
+        } catch {
+            print("[API] Start failed — falling back to offline")
+            startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
+        }
     }
 
-    private func postStopTimer() {
+    private func postStopTimer() async {
         guard let url = URL(string: APIConfig.timerStopURL) else { return }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
 
+        do {
+            let token = try await AuthManager.getIDToken()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } catch {
+            print("[API] Stop token fetch failed: \(error.localizedDescription) — stopping offline")
+            stopLocalOfflineSession()
+            return
+        }
+
         isLoading = true
-        URLSession.shared.dataTask(with: request) { [weak self] _, response, error in
-            DispatchQueue.main.async { self?.isLoading = false }
-        }.resume()
+        defer { isLoading = false }
+
+        do {
+            let (_, response) = try await URLSession.shared.data(for: request)
+            if let http = response as? HTTPURLResponse, http.statusCode != 204 {
+                print("[API] Stop rejected (\(http.statusCode)) — stopping offline")
+                stopLocalOfflineSession()
+            }
+        } catch {
+            print("[API] Stop failed — stopping offline")
+            stopLocalOfflineSession()
+        }
     }
 
     private func postActivity(_ profile: ActivityProfile) {
-        guard let url = URL(string: APIConfig.activitiesURL) else { return }
+        Task {
+            _ = await postActivityToBackend(profile)
+        }
+    }
+
+    @discardableResult
+    private func postActivityToBackend(_ profile: ActivityProfile) async -> Bool {
+        guard let url = URL(string: APIConfig.activitiesURL) else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
+
+        do {
+            let token = try await AuthManager.getIDToken()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } catch {
+            print("[API] Activity token fetch failed: \(error.localizedDescription)")
+            return false
+        }
+
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        
+
         let encoder = JSONEncoder()
         encoder.dateEncodingStrategy = .iso8601
-        
+
         do {
             request.httpBody = try encoder.encode(profile)
-        } catch { return }
-        
-        URLSession.shared.dataTask(with: request).resume()
+        } catch {
+            print("[API] Activity payload encoding failed: \(error.localizedDescription)")
+            return false
+        }
+
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+
+            guard let httpResponse = response as? HTTPURLResponse else {
+                print("[Network] Activity upload failed: invalid HTTP response.")
+                return false
+            }
+
+            guard (200...299).contains(httpResponse.statusCode) else {
+                let serverMessage = String(data: data, encoding: .utf8) ?? "No response body"
+                print("[Network] Activity upload failed with status \(httpResponse.statusCode): \(serverMessage)")
+                return false
+            }
+            return true
+        } catch {
+            print("[API] Activity upload failed: \(error.localizedDescription)")
+            return false
+        }
     }
 
     private func syncOfflineData() {
         Task {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
+
+            let token: String
+            do {
+                token = try await AuthManager.getIDToken()
+            } catch {
+                print("[Sync] Token fetch failed: \(error.localizedDescription). Aborting sync.")
+                return
+            }
             
             // Stage 1: Sync Activities
             if !offlineActivitiesQueue.isEmpty {
@@ -327,6 +406,7 @@ final class TimeManager: ObservableObject {
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 
                 do {
                     request.httpBody = try encoder.encode(offlineActivitiesQueue)
@@ -348,6 +428,7 @@ final class TimeManager: ObservableObject {
                 var request = URLRequest(url: url)
                 request.httpMethod = "POST"
                 request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
                 
                 do {
                     request.httpBody = try encoder.encode(offlineQueue)
@@ -369,35 +450,33 @@ final class TimeManager: ObservableObject {
     }
 
     func fetchActivities() {
-        guard let url = URL(string: APIConfig.activitiesURL) else { return }
+        Task {
+            guard let url = URL(string: APIConfig.activitiesURL) else { return }
 
-        isLoading = true
-        URLSession.shared.dataTask(with: url) { [weak self] data, _, error in
-            DispatchQueue.main.async { self?.isLoading = false }
-            if error != nil {
-                DispatchQueue.main.async {
-                    if self?.activityProfiles.isEmpty == true {
-                        self?.activityProfiles = ActivityProfile.allDefaults
-                    }
-                }
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+
+            do {
+                let token = try await AuthManager.getIDToken()
+                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+            } catch {
                 return
             }
-            guard let data = data else { return }
+
+            isLoading = true
+            defer { isLoading = false }
+
             do {
+                let (data, _) = try await URLSession.shared.data(for: request)
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let profiles = try decoder.decode([ActivityProfile].self, from: data)
-                DispatchQueue.main.async {
-                    self?.activityProfiles = profiles
-                }
+
+                activityProfiles = profiles
             } catch {
-                DispatchQueue.main.async {
-                    if self?.activityProfiles.isEmpty == true {
-                        self?.activityProfiles = ActivityProfile.allDefaults
-                    }
-                }
+                print("[API] Fetch activities failed: \(error.localizedDescription)")
             }
-        }.resume()
+        }
     }
 
     // MARK: - WebSocket Event Handling
@@ -522,6 +601,11 @@ final class TimeManager: ObservableObject {
     }
 
     func handleForegrounded() {
+        guard Auth.auth().currentUser != nil else {
+            wsClient.disconnect()
+            return
+        }
+
         print("[Lifecycle] App foregrounded — reconnecting socket")
         cancelScheduledNotification()
         wsClient.connect()

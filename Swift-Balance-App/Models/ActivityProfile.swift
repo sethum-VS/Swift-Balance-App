@@ -58,20 +58,4 @@ struct ActivityProfile: Codable, Identifiable, Hashable {
         case updatedAt     = "updated_at"
     }
 
-    // MARK: - Factory Defaults (fallback when server is unreachable)
-
-    /// Built-in Top-Up profiles — used only when the server is offline.
-    static let defaultTopUp: [ActivityProfile] = [
-        ActivityProfile(id: "act_1", name: "Deep Work",  category: .toppingUp, iconName: "brain.head.profile"),
-        ActivityProfile(id: "act_2", name: "Gym",        category: .toppingUp, iconName: "figure.run"),
-    ]
-
-    /// Built-in Consume profiles — used only when the server is offline.
-    static let defaultConsume: [ActivityProfile] = [
-        ActivityProfile(id: "act_3", name: "Social Media", category: .consuming, iconName: "bubble.left.and.bubble.right.fill"),
-        ActivityProfile(id: "act_4", name: "Gaming",       category: .consuming, iconName: "gamecontroller.fill"),
-    ]
-
-    /// All factory defaults combined.
-    static let allDefaults: [ActivityProfile] = defaultTopUp + defaultConsume
 }
