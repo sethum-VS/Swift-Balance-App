@@ -21,7 +21,6 @@ final class TimeManager: ObservableObject {
         static let sessionLogs    = "balance_sessionLogs"
         static let offlineQueue   = "balance_offlineQueue"
         static let offlineActivitiesQueue = "balance_offlineActivitiesQueue"
-        static let initialActivitiesFetchCompletedPrefix = "balance_initialActivitiesFetchCompleted_"
     }
 
     // MARK: - Published State (Dual Clock + Offline)
@@ -85,13 +84,6 @@ final class TimeManager: ObservableObject {
 
     var formattedBalance: String { formatSeconds(globalBalance) }
     var formattedSessionTime: String { formatSeconds(currentSessionTime) }
-
-    private var looksLikeFreshLocalState: Bool {
-        sessionLogs.isEmpty &&
-        globalBalance == 0 &&
-        offlineQueue.isEmpty &&
-        offlineActivitiesQueue.isEmpty
-    }
 
     /// True only when device has internet AND server WS confirmed reachable.
     var isBackendAvailable: Bool {
@@ -350,13 +342,8 @@ final class TimeManager: ObservableObject {
     }
 
     @discardableResult
-    private func postActivityToBackend(_ profile: ActivityProfile, isSeedUpload: Bool = false) async -> Bool {
-        guard let url = URL(string: APIConfig.activitiesURL) else {
-            if isSeedUpload {
-                print("[Seed Debug] Invalid URL: \(APIConfig.activitiesURL)")
-            }
-            return false
-        }
+    private func postActivityToBackend(_ profile: ActivityProfile) async -> Bool {
+        guard let url = URL(string: APIConfig.activitiesURL) else { return false }
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
 
@@ -376,87 +363,28 @@ final class TimeManager: ObservableObject {
         do {
             request.httpBody = try encoder.encode(profile)
         } catch {
-            if isSeedUpload {
-                print("[Seed Debug] Failed to encode payload: \(error.localizedDescription)")
-            }
+            print("[API] Activity payload encoding failed: \(error.localizedDescription)")
             return false
-        }
-
-        if isSeedUpload {
-            print("[Seed Debug] URL: \(request.url?.absoluteString ?? "nil")")
-            if let body = request.httpBody,
-               let payloadString = String(data: body, encoding: .utf8) {
-                print("[Seed Debug] Payload: \(payloadString)")
-            } else {
-                print("[Seed Debug] Payload: nil")
-            }
         }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
 
             guard let httpResponse = response as? HTTPURLResponse else {
-                if isSeedUpload {
-                    print("[Network] Seed upload failed: invalid HTTP response.")
-                } else {
-                    print("[Network] Activity upload failed: invalid HTTP response.")
-                }
+                print("[Network] Activity upload failed: invalid HTTP response.")
                 return false
-            }
-
-            if isSeedUpload {
-                print("[Seed Debug] Response code: \(httpResponse.statusCode)")
             }
 
             guard (200...299).contains(httpResponse.statusCode) else {
                 let serverMessage = String(data: data, encoding: .utf8) ?? "No response body"
-                if isSeedUpload {
-                    print("[Network] Seed upload failed with status \(httpResponse.statusCode): \(serverMessage)")
-                } else {
-                    print("[Network] Activity upload failed with status \(httpResponse.statusCode): \(serverMessage)")
-                }
+                print("[Network] Activity upload failed with status \(httpResponse.statusCode): \(serverMessage)")
                 return false
-            }
-
-            if isSeedUpload {
-                print("[Network] Successfully seeded activity.")
             }
             return true
         } catch {
-            if isSeedUpload {
-                print("[Seed Debug] URLSession failed: \(error.localizedDescription)")
-            } else {
-                print("[API] Activity upload failed: \(error.localizedDescription)")
-            }
+            print("[API] Activity upload failed: \(error.localizedDescription)")
             return false
         }
-    }
-
-    private func initialActivitiesFetchKey(for userID: String) -> String {
-        Keys.initialActivitiesFetchCompletedPrefix + userID
-    }
-
-    private func hasCompletedInitialActivitiesFetch(for userID: String) -> Bool {
-        UserDefaults.standard.bool(forKey: initialActivitiesFetchKey(for: userID))
-    }
-
-    private func markInitialActivitiesFetchCompleted(for userID: String) {
-        UserDefaults.standard.set(true, forKey: initialActivitiesFetchKey(for: userID))
-    }
-
-    @discardableResult
-    func seedDefaultActivities() async -> Bool {
-        var uploadedAny = false
-        for defaultProfile in ActivityProfile.allDefaults {
-            var profileToSeed = defaultProfile
-            if profileToSeed.creditPerHour == nil && profileToSeed.category == .toppingUp {
-                profileToSeed.creditPerHour = 60.0
-            }
-            if await postActivityToBackend(profileToSeed, isSeedUpload: true) {
-                uploadedAny = true
-            }
-        }
-        return uploadedAny
     }
 
     private func syncOfflineData() {
@@ -532,9 +460,6 @@ final class TimeManager: ObservableObject {
                 let token = try await AuthManager.getIDToken()
                 request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
             } catch {
-                if activityProfiles.isEmpty {
-                    activityProfiles = ActivityProfile.allDefaults
-                }
                 return
             }
 
@@ -547,43 +472,9 @@ final class TimeManager: ObservableObject {
                 decoder.dateDecodingStrategy = .iso8601
                 let profiles = try decoder.decode([ActivityProfile].self, from: data)
 
-                let userID = Auth.auth().currentUser?.uid
-                let isInitialFetch: Bool
-                if let userID {
-                    isInitialFetch = !hasCompletedInitialActivitiesFetch(for: userID)
-                } else {
-                    isInitialFetch = false
-                }
-
-                let shouldSeedDefaults = profiles.isEmpty && isInitialFetch && looksLikeFreshLocalState
-                if shouldSeedDefaults {
-                    let uploadedAny = await seedDefaultActivities()
-                    activityProfiles = ActivityProfile.allDefaults
-
-                    if uploadedAny {
-                        do {
-                            let (seededData, _) = try await URLSession.shared.data(for: request)
-                            let seededProfiles = try decoder.decode([ActivityProfile].self, from: seededData)
-                            if !seededProfiles.isEmpty {
-                                activityProfiles = seededProfiles
-                                if let userID {
-                                    markInitialActivitiesFetchCompleted(for: userID)
-                                }
-                            }
-                        } catch {
-                            // Keep optimistic local defaults if refresh fails.
-                        }
-                    }
-                } else {
-                    activityProfiles = profiles
-                    if !profiles.isEmpty, isInitialFetch, let userID {
-                        markInitialActivitiesFetchCompleted(for: userID)
-                    }
-                }
+                activityProfiles = profiles
             } catch {
-                if activityProfiles.isEmpty {
-                    activityProfiles = ActivityProfile.allDefaults
-                }
+                print("[API] Fetch activities failed: \(error.localizedDescription)")
             }
         }
     }
