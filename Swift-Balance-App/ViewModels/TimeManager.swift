@@ -9,6 +9,7 @@ import Foundation
 import Combine
 import UIKit
 import UserNotifications
+import FirebaseAuth
 
 /// Core ViewModel — dual-clock delta calculation engine with Offline Sync Support.
 final class TimeManager: ObservableObject {
@@ -20,6 +21,7 @@ final class TimeManager: ObservableObject {
         static let sessionLogs    = "balance_sessionLogs"
         static let offlineQueue   = "balance_offlineQueue"
         static let offlineActivitiesQueue = "balance_offlineActivitiesQueue"
+        static let initialActivitiesFetchCompletedPrefix = "balance_initialActivitiesFetchCompleted_"
     }
 
     // MARK: - Published State (Dual Clock + Offline)
@@ -83,6 +85,13 @@ final class TimeManager: ObservableObject {
 
     var formattedBalance: String { formatSeconds(globalBalance) }
     var formattedSessionTime: String { formatSeconds(currentSessionTime) }
+
+    private var looksLikeFreshLocalState: Bool {
+        sessionLogs.isEmpty &&
+        globalBalance == 0 &&
+        offlineQueue.isEmpty &&
+        offlineActivitiesQueue.isEmpty
+    }
 
     /// True only when device has internet AND server WS confirmed reachable.
     var isBackendAvailable: Bool {
@@ -339,33 +348,62 @@ final class TimeManager: ObservableObject {
 
     private func postActivity(_ profile: ActivityProfile) {
         Task {
-            guard let url = URL(string: APIConfig.activitiesURL) else { return }
-            var request = URLRequest(url: url)
-            request.httpMethod = "POST"
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            _ = await postActivityToBackend(profile)
+        }
+    }
 
-            do {
-                let token = try await AuthManager.getIDToken()
-                request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
-            } catch {
-                print("[API] Activity token fetch failed: \(error.localizedDescription)")
-                return
-            }
-            
-            let encoder = JSONEncoder()
-            encoder.dateEncodingStrategy = .iso8601
-            
-            do {
-                request.httpBody = try encoder.encode(profile)
-            } catch {
-                return
-            }
+    @discardableResult
+    private func postActivityToBackend(_ profile: ActivityProfile) async -> Bool {
+        guard let url = URL(string: APIConfig.activitiesURL) else { return false }
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-            do {
-                _ = try await URLSession.shared.data(for: request)
-            } catch {
-                print("[API] Activity upload failed: \(error.localizedDescription)")
+        do {
+            let token = try await AuthManager.getIDToken()
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        } catch {
+            print("[API] Activity token fetch failed: \(error.localizedDescription)")
+            return false
+        }
+
+        let encoder = JSONEncoder()
+        encoder.dateEncodingStrategy = .iso8601
+
+        do {
+            request.httpBody = try encoder.encode(profile)
+        } catch {
+            return false
+        }
+
+        do {
+            _ = try await URLSession.shared.data(for: request)
+            return true
+        } catch {
+            print("[API] Activity upload failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    private func initialActivitiesFetchKey(for userID: String) -> String {
+        Keys.initialActivitiesFetchCompletedPrefix + userID
+    }
+
+    private func hasCompletedInitialActivitiesFetch(for userID: String) -> Bool {
+        UserDefaults.standard.bool(forKey: initialActivitiesFetchKey(for: userID))
+    }
+
+    private func markInitialActivitiesFetchCompleted(for userID: String) {
+        UserDefaults.standard.set(true, forKey: initialActivitiesFetchKey(for: userID))
+    }
+
+    func seedDefaultActivities() async {
+        for defaultProfile in ActivityProfile.allDefaults {
+            var profileToSeed = defaultProfile
+            if profileToSeed.creditPerHour == nil && profileToSeed.category == .toppingUp {
+                profileToSeed.creditPerHour = 60.0
             }
+            _ = await postActivityToBackend(profileToSeed)
         }
     }
 
@@ -456,7 +494,35 @@ final class TimeManager: ObservableObject {
                 let decoder = JSONDecoder()
                 decoder.dateDecodingStrategy = .iso8601
                 let profiles = try decoder.decode([ActivityProfile].self, from: data)
-                activityProfiles = profiles
+
+                let userID = Auth.auth().currentUser?.uid
+                let isInitialFetch: Bool
+                if let userID {
+                    isInitialFetch = !hasCompletedInitialActivitiesFetch(for: userID)
+                    if isInitialFetch {
+                        markInitialActivitiesFetchCompleted(for: userID)
+                    }
+                } else {
+                    isInitialFetch = false
+                }
+
+                let shouldSeedDefaults = profiles.isEmpty && isInitialFetch && looksLikeFreshLocalState
+                if shouldSeedDefaults {
+                    await seedDefaultActivities()
+                    activityProfiles = ActivityProfile.allDefaults
+
+                    do {
+                        let (seededData, _) = try await URLSession.shared.data(for: request)
+                        let seededProfiles = try decoder.decode([ActivityProfile].self, from: seededData)
+                        if !seededProfiles.isEmpty {
+                            activityProfiles = seededProfiles
+                        }
+                    } catch {
+                        // Keep optimistic local defaults if refresh fails.
+                    }
+                } else {
+                    activityProfiles = profiles
+                }
             } catch {
                 if activityProfiles.isEmpty {
                     activityProfiles = ActivityProfile.allDefaults
