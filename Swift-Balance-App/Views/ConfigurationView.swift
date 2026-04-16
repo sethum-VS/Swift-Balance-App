@@ -10,6 +10,7 @@ import SwiftUI
 /// Tab 3 — manage activity profiles (add, view, delete).
 struct ConfigurationView: View {
     @EnvironmentObject var timeManager: TimeManager
+    @EnvironmentObject var authManager: AuthManager
 
     // MARK: - New Profile Form State
     @State private var newProfileName: String = ""
@@ -54,6 +55,12 @@ struct ConfigurationView: View {
                         }
                     } header: {
                         sectionHeader("Consume Activities", color: Color(hex: 0xFC466B))
+                    }
+
+                    Section {
+                        Button("Sign Out", role: .destructive) {
+                            authManager.signOut()
+                        }
                     }
                 }
                 .listStyle(.insetGrouped)
@@ -256,4 +263,5 @@ struct ConfigurationView: View {
 #Preview {
     ConfigurationView()
         .environmentObject(TimeManager())
+        .environmentObject(AuthManager())
 }
