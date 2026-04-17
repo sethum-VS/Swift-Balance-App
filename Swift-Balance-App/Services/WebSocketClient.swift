@@ -43,6 +43,15 @@ final class WebSocketClient: ObservableObject {
     /// Combine-driven keep-alive ping timer.
     private var pingCancellable: AnyCancellable?
 
+    /// Whether reconnect attempts are allowed.
+    private var shouldReconnect: Bool = true
+
+    /// True while an async connect/token-fetch flow is running.
+    private var isConnecting: Bool = false
+
+    /// Connect attempt identity to prevent stale async connect completion.
+    private var activeConnectID: UUID?
+
     // MARK: - Init
 
     init(baseURL: String = Config.wsBaseURL) {
@@ -53,8 +62,22 @@ final class WebSocketClient: ObservableObject {
     // MARK: - Connection Lifecycle
 
     /// Opens the WebSocket connection and starts the receive loop.
-    func connect() {
+    func connect(forceReconnect: Bool = false) {
+        shouldReconnect = true
+
+        if forceReconnect, webSocketTask != nil {
+            pingCancellable?.cancel()
+            pingCancellable = nil
+            webSocketTask?.cancel(with: .normalClosure, reason: nil)
+            webSocketTask = nil
+            isConnected = false
+            isConnectedToServer = false
+            isConnecting = false
+            activeConnectID = nil
+        }
+
         guard webSocketTask == nil else { return }
+        guard !isConnecting else { return }
 
         guard let currentUser = Auth.auth().currentUser else {
             print("[WS] Connection aborted: User session not ready.")
@@ -62,8 +85,13 @@ final class WebSocketClient: ObservableObject {
         }
         _ = currentUser
 
+        isConnecting = true
+        let connectID = UUID()
+        activeConnectID = connectID
+
         Task { [weak self] in
             guard let self = self else { return }
+            defer { self.isConnecting = false }
 
             let token: String
             do {
@@ -73,6 +101,8 @@ final class WebSocketClient: ObservableObject {
                 return
             }
 
+            guard self.activeConnectID == connectID else { return }
+            guard self.shouldReconnect else { return }
             guard self.webSocketTask == nil else { return }
 
             let encodedToken = token.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? token
@@ -86,38 +116,48 @@ final class WebSocketClient: ObservableObject {
             var request = URLRequest(url: url)
             request.setValue("iOS", forHTTPHeaderField: "X-Client-Type")
 
-            self.webSocketTask = self.session.webSocketTask(with: request)
-            self.webSocketTask?.resume()
+            let task = self.session.webSocketTask(with: request)
+            self.webSocketTask = task
+            task.resume()
 
-            self.isConnected = true
-            self.reconnectDelay = 1.0
             self.isReconnecting = false
 
             print("[WS] Connected to \(urlString)")
-            self.receiveLoop()
+            self.receiveLoop(task: task)
             self.startPingTimer()
         }
     }
 
     /// Gracefully closes the WebSocket connection.
-    func disconnect() {
+    func disconnect(reason: String? = nil) {
+        shouldReconnect = false
+        activeConnectID = nil
+        isConnecting = false
+        isReconnecting = false
+
         pingCancellable?.cancel()
         pingCancellable = nil
         webSocketTask?.cancel(with: .normalClosure, reason: nil)
-        print("[WS] Connection explicitly closed due to sign-out.")
+
+        if let reason {
+            print("[WS] Connection explicitly closed (\(reason)).")
+        } else {
+            print("[WS] Connection explicitly closed.")
+        }
+
         webSocketTask = nil
         isConnected = false
         isConnectedToServer = false
-        isReconnecting = false
         print("[WS] Disconnected")
     }
 
     // MARK: - Receive Loop
 
     /// Continuously listens for incoming messages and decodes them as `WSEvent`.
-    private func receiveLoop() {
-        webSocketTask?.receive { [weak self] result in
+    private func receiveLoop(task: URLSessionWebSocketTask) {
+        task.receive { [weak self] result in
             guard let self = self else { return }
+            guard self.webSocketTask === task else { return }
 
             switch result {
             case .success(let message):
@@ -125,12 +165,19 @@ final class WebSocketClient: ObservableObject {
                 if !self.isConnectedToServer {
                     DispatchQueue.main.async { self.isConnectedToServer = true }
                 }
+
+                if !self.isConnected {
+                    DispatchQueue.main.async { self.isConnected = true }
+                    self.reconnectDelay = 1.0
+                }
+
                 self.handleMessage(message)
-                self.receiveLoop()
+                self.receiveLoop(task: task)
 
             case .failure(let error):
-                print("[WS] Receive error: \(error.localizedDescription)")
-                self.handleDisconnect()
+                let shouldAttemptReconnect = self.shouldReconnect
+                print("[WS] Receive error: \(error.localizedDescription) [reconnect=\(shouldAttemptReconnect)]")
+                self.handleDisconnect(unexpected: shouldAttemptReconnect)
             }
         }
     }
@@ -169,17 +216,24 @@ final class WebSocketClient: ObservableObject {
             .publish(every: 25.0, on: .main, in: .common)
             .autoconnect()
             .sink { [weak self] _ in
-                guard let self = self, self.isConnected else {
+                guard let self = self, self.webSocketTask != nil else {
                     self?.pingCancellable?.cancel()
                     self?.pingCancellable = nil
                     return
                 }
                 self.webSocketTask?.sendPing { error in
                     if let error = error {
-                        print("[WS] Ping failed: \(error.localizedDescription)")
+                        let shouldAttemptReconnect = self.shouldReconnect
+                        print("[WS] Ping failed: \(error.localizedDescription) [reconnect=\(shouldAttemptReconnect)]")
                         self.pingCancellable?.cancel()
                         self.pingCancellable = nil
-                        self.handleDisconnect()
+                        self.handleDisconnect(unexpected: shouldAttemptReconnect)
+                        return
+                    }
+
+                    if !self.isConnected {
+                        DispatchQueue.main.async { self.isConnected = true }
+                        self.reconnectDelay = 1.0
                     }
                 }
             }
@@ -188,26 +242,44 @@ final class WebSocketClient: ObservableObject {
     // MARK: - Reconnection
 
     /// Handles an unexpected disconnection and triggers reconnect.
-    private func handleDisconnect() {
+    private func handleDisconnect(unexpected: Bool) {
         pingCancellable?.cancel()
         pingCancellable = nil
+        activeConnectID = nil
+        isConnecting = false
+
+        let shouldAttemptReconnect = unexpected && shouldReconnect
+
         DispatchQueue.main.async {
             self.webSocketTask = nil
             self.isConnected = false
             self.isConnectedToServer = false
+
+            guard shouldAttemptReconnect else {
+                print("[WS] Reconnect skipped (unexpected=\(unexpected), shouldReconnect=\(self.shouldReconnect))")
+                return
+            }
+
+            self.attemptReconnect()
         }
-        attemptReconnect()
     }
 
     /// Reconnects with exponential backoff.
     private func attemptReconnect() {
+        guard shouldReconnect else { return }
+        guard webSocketTask == nil else { return }
+        guard !isConnecting else { return }
         guard !isReconnecting else { return }
         isReconnecting = true
 
-        print("[WS] Reconnecting in \(reconnectDelay)s...")
-        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + reconnectDelay) { [weak self] in
+        let delay = reconnectDelay
+        print("[WS] Reconnecting in \(delay)s...")
+        DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + delay) { [weak self] in
             guard let self = self else { return }
             self.isReconnecting = false
+
+            guard self.shouldReconnect else { return }
+            guard self.webSocketTask == nil else { return }
 
             // Double the delay for next attempt, capped
             self.reconnectDelay = min(self.reconnectDelay * 2, self.maxReconnectDelay)

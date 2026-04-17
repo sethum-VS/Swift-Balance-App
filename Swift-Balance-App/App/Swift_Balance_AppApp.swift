@@ -55,14 +55,16 @@ struct Swift_Balance_AppApp: App {
                     webSocketClient.connect()
                     timeManager.fetchActivities()
                 } else {
-                    webSocketClient.disconnect()
+                    webSocketClient.disconnect(reason: "auth state changed to signed out")
                 }
             }
         }
         .onChange(of: scenePhase) { newPhase in
             switch newPhase {
-            case .background, .inactive:
+            case .background:
                 timeManager.handleBackgrounded()
+            case .inactive:
+                break
             case .active:
                 timeManager.handleForegrounded()
             default:

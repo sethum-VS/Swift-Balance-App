@@ -9,6 +9,10 @@ import Foundation
 import Combine
 import FirebaseAuth
 
+extension Notification.Name {
+    static let userDidSignOut = Notification.Name("userDidSignOut")
+}
+
 enum AuthTokenError: LocalizedError {
     case userNotAuthenticated
     case tokenUnavailable
@@ -102,6 +106,7 @@ final class AuthManager: ObservableObject {
         if (try? Auth.auth().signOut()) != nil {
             isAuthenticated = false
             errorMessage = nil
+            NotificationCenter.default.post(name: .userDidSignOut, object: nil)
         } else {
             errorMessage = "Failed to sign out."
         }
