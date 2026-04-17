@@ -1001,7 +1001,7 @@ final class TimeManager: ObservableObject {
 
         print("[Lifecycle] App foregrounded — reconnecting socket")
         cancelScheduledNotification()
-        wsClient.connect()
+        wsClient.connect(forceReconnect: true)
         fetchActivities()
 
         restorePersistedActiveSessionSnapshot()

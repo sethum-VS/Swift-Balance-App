@@ -62,8 +62,19 @@ final class WebSocketClient: ObservableObject {
     // MARK: - Connection Lifecycle
 
     /// Opens the WebSocket connection and starts the receive loop.
-    func connect() {
+    func connect(forceReconnect: Bool = false) {
         shouldReconnect = true
+
+        if forceReconnect, webSocketTask != nil {
+            pingCancellable?.cancel()
+            pingCancellable = nil
+            webSocketTask?.cancel(with: .normalClosure, reason: nil)
+            webSocketTask = nil
+            isConnected = false
+            isConnectedToServer = false
+            isConnecting = false
+            activeConnectID = nil
+        }
 
         guard webSocketTask == nil else { return }
         guard !isConnecting else { return }
