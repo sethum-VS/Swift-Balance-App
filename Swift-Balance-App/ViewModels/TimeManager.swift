@@ -632,12 +632,12 @@ final class TimeManager: ObservableObject {
             scheduleConsumeExpiryNotification(secondsRemaining: globalBalance)
         }
 
-        wsClient.disconnect()
+        wsClient.disconnect(reason: "app backgrounded")
     }
 
     func handleForegrounded() {
         guard Auth.auth().currentUser != nil else {
-            wsClient.disconnect()
+            wsClient.disconnect(reason: "user session unavailable")
             return
         }
 
