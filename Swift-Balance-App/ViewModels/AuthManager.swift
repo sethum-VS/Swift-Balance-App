@@ -33,6 +33,8 @@ enum AuthTokenError: LocalizedError {
 final class AuthManager: ObservableObject {
     @Published var isAuthenticated: Bool = false
     @Published var errorMessage: String?
+    @Published var successMessage: String?
+    @Published var canResendVerificationEmail: Bool = false
     @Published var isLoading: Bool = false
 
     private var authStateHandle: AuthStateDidChangeListenerHandle?
@@ -42,17 +44,17 @@ final class AuthManager: ObservableObject {
             DispatchQueue.main.async {
                 if let user {
                     let requiresVerification = Self.requiresEmailVerification(for: user)
-                    self?.isAuthenticated = !requiresVerification || user.isEmailVerified
+                    let isVerifiedSession = !requiresVerification || user.isEmailVerified
+                    self?.isAuthenticated = isVerifiedSession
+                    self?.canResendVerificationEmail = requiresVerification && !user.isEmailVerified
 
-                    if self?.isAuthenticated == true {
+                    if isVerifiedSession {
                         self?.errorMessage = nil
+                        self?.successMessage = nil
                     }
                 } else {
                     self?.isAuthenticated = false
-                }
-
-                if user != nil, self?.isAuthenticated == true {
-                    self?.errorMessage = nil
+                    self?.canResendVerificationEmail = false
                 }
             }
         }
@@ -68,10 +70,13 @@ final class AuthManager: ObservableObject {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, !password.isEmpty else {
             errorMessage = "Email and password are required."
+            successMessage = nil
             return
         }
 
         errorMessage = nil
+        successMessage = nil
+        canResendVerificationEmail = false
         isLoading = true
 
         Auth.auth().signIn(withEmail: trimmedEmail, password: password) { [weak self] authResult, error in
@@ -80,25 +85,30 @@ final class AuthManager: ObservableObject {
 
                 if let error {
                     self?.isAuthenticated = false
+                    self?.canResendVerificationEmail = false
                     self?.errorMessage = error.localizedDescription
                     return
                 }
 
                 guard let user = Auth.auth().currentUser ?? authResult?.user else {
                     self?.isAuthenticated = false
+                    self?.canResendVerificationEmail = false
                     self?.errorMessage = "Unable to validate your account."
                     return
                 }
 
                 guard !Self.requiresEmailVerification(for: user) || user.isEmailVerified else {
-                    try? Auth.auth().signOut()
                     self?.isAuthenticated = false
+                    self?.canResendVerificationEmail = true
+                    self?.successMessage = nil
                     self?.errorMessage = "Please verify your email before signing in."
                     return
                 }
 
                 self?.isAuthenticated = true
+                self?.canResendVerificationEmail = false
                 self?.errorMessage = nil
+                self?.successMessage = nil
             }
         }
     }
@@ -108,10 +118,13 @@ final class AuthManager: ObservableObject {
         let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedEmail.isEmpty, !password.isEmpty else {
             errorMessage = "Email and password are required."
+            successMessage = nil
             return
         }
 
         errorMessage = nil
+        successMessage = nil
+        canResendVerificationEmail = false
         isLoading = true
 
         defer {
@@ -125,15 +138,71 @@ final class AuthManager: ObservableObject {
 
             isAuthenticated = false
             errorMessage = "Account created. Please check your email and verify your account before signing in."
+            successMessage = nil
         } catch {
             isAuthenticated = false
             errorMessage = error.localizedDescription
+            successMessage = nil
+        }
+    }
+
+    @MainActor
+    func resetPassword(email: String) async {
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty else {
+            errorMessage = "Enter your email first to reset your password."
+            successMessage = nil
+            return
+        }
+
+        errorMessage = nil
+        successMessage = nil
+        isLoading = true
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            try await Auth.auth().sendPasswordReset(withEmail: trimmedEmail)
+            successMessage = "Reset link sent to your email."
+        } catch {
+            errorMessage = error.localizedDescription
+            successMessage = nil
+        }
+    }
+
+    @MainActor
+    func resendVerificationEmail() async {
+        guard Auth.auth().currentUser != nil else {
+            errorMessage = "Please sign in again before requesting a verification email."
+            successMessage = nil
+            canResendVerificationEmail = false
+            return
+        }
+
+        errorMessage = nil
+        successMessage = nil
+        isLoading = true
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            try await Auth.auth().currentUser?.sendEmailVerification()
+            successMessage = "Verification email sent. Please check your inbox."
+        } catch {
+            errorMessage = error.localizedDescription
+            successMessage = nil
         }
     }
 
     @MainActor
     func signInWithGoogle() async {
         errorMessage = nil
+        successMessage = nil
+        canResendVerificationEmail = false
         isLoading = true
 
         defer {
@@ -144,12 +213,14 @@ final class AuthManager: ObservableObject {
             guard let clientID = FirebaseApp.app()?.options.clientID else {
                 isAuthenticated = false
                 errorMessage = "Google Sign-In is not configured."
+                successMessage = nil
                 return
             }
 
             guard let presentingViewController = Self.topViewController() else {
                 isAuthenticated = false
                 errorMessage = "Unable to present Google Sign-In."
+                successMessage = nil
                 return
             }
 
@@ -159,6 +230,7 @@ final class AuthManager: ObservableObject {
             guard let idToken = signInResult.user.idToken?.tokenString else {
                 isAuthenticated = false
                 errorMessage = "Google ID token is missing."
+                successMessage = nil
                 return
             }
 
@@ -168,19 +240,24 @@ final class AuthManager: ObservableObject {
             _ = try await Auth.auth().signIn(with: credential)
             isAuthenticated = true
             errorMessage = nil
+            successMessage = nil
         } catch {
             isAuthenticated = false
             errorMessage = error.localizedDescription
+            successMessage = nil
         }
     }
 
     func signOut() {
         if (try? Auth.auth().signOut()) != nil {
             isAuthenticated = false
+            canResendVerificationEmail = false
             errorMessage = nil
+            successMessage = nil
             NotificationCenter.default.post(name: .userDidSignOut, object: nil)
         } else {
             errorMessage = "Failed to sign out."
+            successMessage = nil
         }
     }
 

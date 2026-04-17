@@ -13,6 +13,8 @@ struct LoginView: View {
     @State private var email: String = ""
     @State private var password: String = ""
     @State private var isSignUp: Bool = false
+    @State private var timeRemaining: Int = 0
+    @State private var timer: Timer?
 
     @FocusState private var focusedField: Field?
 
@@ -115,6 +117,22 @@ struct LoginView: View {
                                     .stroke(Color.white.opacity(0.10), lineWidth: 1)
                             )
                             .foregroundStyle(.white)
+
+                        if !isSignUp {
+                            HStack {
+                                Spacer()
+
+                                Button(action: submitPasswordReset) {
+                                    Text("Forgot Password?")
+                                        .font(.footnote.weight(.semibold))
+                                        .foregroundStyle(Color(hex: 0x92FE9D))
+                                }
+                                .buttonStyle(.plain)
+                                .disabled(authManager.isLoading)
+                                .opacity(authManager.isLoading ? 0.55 : 1.0)
+                            }
+                            .padding(.top, 2)
+                        }
                     }
 
                     if let error = authManager.errorMessage {
@@ -123,6 +141,35 @@ struct LoginView: View {
                             .foregroundStyle(Color(hex: 0xFF8E8E))
                             .multilineTextAlignment(.center)
                             .padding(.horizontal, 4)
+                    }
+
+                    if let success = authManager.successMessage {
+                        Text(success)
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color(hex: 0x92FE9D))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 4)
+                    }
+
+                    if !isSignUp && authManager.canResendVerificationEmail {
+                        Button(action: submitResendVerificationEmail) {
+                            Text(resendButtonTitle)
+                                .font(.footnote.weight(.bold))
+                                .frame(maxWidth: .infinity)
+                                .padding(.vertical, 12)
+                                .background(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .fill(Color.white.opacity(0.06))
+                                )
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                                        .stroke(Color.white.opacity(0.16), lineWidth: 1)
+                                )
+                                .foregroundStyle(.white)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(authManager.isLoading || timeRemaining > 0)
+                        .opacity((authManager.isLoading || timeRemaining > 0) ? 0.60 : 1.0)
                     }
 
                     Button(action: submitAuth) {
@@ -214,6 +261,8 @@ struct LoginView: View {
                         isSignUp.toggle()
                     }
                     authManager.errorMessage = nil
+                    authManager.successMessage = nil
+                    stopResendCooldown()
                 } label: {
                     Text(isSignUp ? "Already have an account? Sign in" : "Don't have an account? Sign up")
                         .font(.subheadline.weight(.semibold))
@@ -227,6 +276,14 @@ struct LoginView: View {
         .onTapGesture {
             focusedField = nil
         }
+        .onChange(of: authManager.canResendVerificationEmail) { canResend in
+            if !canResend {
+                stopResendCooldown()
+            }
+        }
+        .onDisappear {
+            stopResendCooldown()
+        }
         .preferredColorScheme(.dark)
     }
 
@@ -235,6 +292,14 @@ struct LoginView: View {
             return isSignUp ? "Signing Up..." : "Signing In..."
         }
         return isSignUp ? "Sign Up" : "Sign In"
+    }
+
+    private var resendButtonTitle: String {
+        if timeRemaining > 0 {
+            return "Resend available in \(timeRemaining)s"
+        }
+
+        return "Resend Verification Email"
     }
 
     private func submitAuth() {
@@ -248,6 +313,56 @@ struct LoginView: View {
         } else {
             authManager.signIn(email: email, password: password)
         }
+    }
+
+    private func submitPasswordReset() {
+        guard !authManager.isLoading else { return }
+        focusedField = nil
+
+        let trimmedEmail = email.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedEmail.isEmpty else {
+            authManager.errorMessage = "Enter your email first to reset your password."
+            authManager.successMessage = nil
+            return
+        }
+
+        Task {
+            await authManager.resetPassword(email: trimmedEmail)
+        }
+    }
+
+    private func submitResendVerificationEmail() {
+        guard !authManager.isLoading, timeRemaining == 0 else { return }
+        focusedField = nil
+
+        Task {
+            await authManager.resendVerificationEmail()
+            if authManager.errorMessage == nil {
+                startResendCooldown()
+            }
+        }
+    }
+
+    private func startResendCooldown() {
+        stopResendCooldown()
+        timeRemaining = 60
+
+        timer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { activeTimer in
+            if timeRemaining > 0 {
+                timeRemaining -= 1
+            }
+
+            if timeRemaining <= 0 {
+                activeTimer.invalidate()
+                timer = nil
+            }
+        }
+    }
+
+    private func stopResendCooldown() {
+        timer?.invalidate()
+        timer = nil
+        timeRemaining = 0
     }
 
     private func submitGoogleAuth() {
