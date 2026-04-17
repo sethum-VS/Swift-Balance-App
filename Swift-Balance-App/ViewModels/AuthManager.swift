@@ -8,6 +8,9 @@
 import Foundation
 import Combine
 import FirebaseAuth
+import FirebaseCore
+import GoogleSignIn
+import UIKit
 
 extension Notification.Name {
     static let userDidSignOut = Notification.Name("userDidSignOut")
@@ -37,8 +40,18 @@ final class AuthManager: ObservableObject {
     init() {
         authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             DispatchQueue.main.async {
-                self?.isAuthenticated = (user != nil)
-                if user != nil {
+                if let user {
+                    let requiresVerification = Self.requiresEmailVerification(for: user)
+                    self?.isAuthenticated = !requiresVerification || user.isEmailVerified
+
+                    if self?.isAuthenticated == true {
+                        self?.errorMessage = nil
+                    }
+                } else {
+                    self?.isAuthenticated = false
+                }
+
+                if user != nil, self?.isAuthenticated == true {
                     self?.errorMessage = nil
                 }
             }
@@ -71,7 +84,20 @@ final class AuthManager: ObservableObject {
                     return
                 }
 
-                self?.isAuthenticated = (authResult?.user != nil)
+                guard let user = Auth.auth().currentUser ?? authResult?.user else {
+                    self?.isAuthenticated = false
+                    self?.errorMessage = "Unable to validate your account."
+                    return
+                }
+
+                guard !Self.requiresEmailVerification(for: user) || user.isEmailVerified else {
+                    try? Auth.auth().signOut()
+                    self?.isAuthenticated = false
+                    self?.errorMessage = "Please verify your email before signing in."
+                    return
+                }
+
+                self?.isAuthenticated = true
                 self?.errorMessage = nil
             }
         }
@@ -93,7 +119,53 @@ final class AuthManager: ObservableObject {
         }
 
         do {
-            _ = try await Auth.auth().createUser(withEmail: trimmedEmail, password: password)
+            let authResult = try await Auth.auth().createUser(withEmail: trimmedEmail, password: password)
+            try await authResult.user.sendEmailVerification()
+            try? Auth.auth().signOut()
+
+            isAuthenticated = false
+            errorMessage = "Account created. Please check your email and verify your account before signing in."
+        } catch {
+            isAuthenticated = false
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    func signInWithGoogle() async {
+        errorMessage = nil
+        isLoading = true
+
+        defer {
+            isLoading = false
+        }
+
+        do {
+            guard let clientID = FirebaseApp.app()?.options.clientID else {
+                isAuthenticated = false
+                errorMessage = "Google Sign-In is not configured."
+                return
+            }
+
+            guard let presentingViewController = Self.topViewController() else {
+                isAuthenticated = false
+                errorMessage = "Unable to present Google Sign-In."
+                return
+            }
+
+            GIDSignIn.sharedInstance.configuration = GIDConfiguration(clientID: clientID)
+            let signInResult = try await GIDSignIn.sharedInstance.signIn(withPresenting: presentingViewController)
+
+            guard let idToken = signInResult.user.idToken?.tokenString else {
+                isAuthenticated = false
+                errorMessage = "Google ID token is missing."
+                return
+            }
+
+            let accessToken = signInResult.user.accessToken.tokenString
+            let credential = GoogleAuthProvider.credential(withIDToken: idToken, accessToken: accessToken)
+
+            _ = try await Auth.auth().signIn(with: credential)
             isAuthenticated = true
             errorMessage = nil
         } catch {
@@ -136,5 +208,38 @@ final class AuthManager: ObservableObject {
 
     func getIDToken() async throws -> String {
         try await Self.getIDToken()
+    }
+
+    private static func requiresEmailVerification(for user: User) -> Bool {
+        user.providerData.contains { $0.providerID == EmailAuthProviderID }
+    }
+
+    private static func topViewController(base: UIViewController? = nil) -> UIViewController? {
+        let startingViewController: UIViewController? = {
+            if let base {
+                return base
+            }
+
+            return UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap { $0.windows }
+                .first(where: { $0.isKeyWindow })?
+                .rootViewController
+        }()
+
+        if let navigationController = startingViewController as? UINavigationController {
+            return topViewController(base: navigationController.visibleViewController)
+        }
+
+        if let tabBarController = startingViewController as? UITabBarController,
+           let selectedViewController = tabBarController.selectedViewController {
+            return topViewController(base: selectedViewController)
+        }
+
+        if let presentedViewController = startingViewController?.presentedViewController {
+            return topViewController(base: presentedViewController)
+        }
+
+        return startingViewController
     }
 }
