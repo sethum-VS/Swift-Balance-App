@@ -711,9 +711,9 @@ final class TimeManager: ObservableObject {
             return
         }
 
-        if let activeActivityNameFallback,
+        if let fallbackName = activeActivityNameFallback,
            let profile = activityProfiles.first(where: {
-               $0.name.caseInsensitiveCompare(activeActivityNameFallback) == .orderedSame
+               $0.name.caseInsensitiveCompare(fallbackName) == .orderedSame
            }) {
             activeProfile = profile
             activeActivityID = profile.id
