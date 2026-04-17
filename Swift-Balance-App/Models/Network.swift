@@ -19,6 +19,13 @@ enum APIConfig {
     static var activitiesURL: String     { "\(baseURL)/api/activities" }
     static var timerStartURL: String     { "\(baseURL)/api/timer/start" }
     static var timerStopURL: String      { "\(baseURL)/api/timer/stop" }
+    static var timerStateURLCandidates: [String] {
+        [
+            "\(baseURL)/api/timer/state",
+            "\(baseURL)/api/timer/active",
+            "\(baseURL)/api/timer/current"
+        ]
+    }
     static var syncURL: String           { "\(baseURL)/api/sync" }
     static var activitiesSyncURL: String { "\(baseURL)/api/activities/sync" }
 }

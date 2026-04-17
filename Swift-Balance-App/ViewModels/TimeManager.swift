@@ -21,6 +21,12 @@ final class TimeManager: ObservableObject {
         static let sessionLogs    = "balance_sessionLogs"
         static let offlineQueue   = "balance_offlineQueue"
         static let offlineActivitiesQueue = "balance_offlineActivitiesQueue"
+        static let activeSessionID = "balance_activeSessionID"
+        static let activeSessionStartTimestamp = "balance_activeSessionStartTimestamp"
+        static let activeSessionBaseBalance = "balance_activeSessionBaseBalance"
+        static let activeSessionCategory = "balance_activeSessionCategory"
+        static let activeActivityID = "balance_activeActivityID"
+        static let activeActivityName = "balance_activeActivityName"
     }
 
     // MARK: - Published State (Dual Clock + Offline)
@@ -63,9 +69,26 @@ final class TimeManager: ObservableObject {
 
     @Published private(set) var activeProfile: ActivityProfile?
 
-    var activeActivityName: String? { activeProfile?.name }
+    var activeActivityName: String? { activeProfile?.name ?? activeActivityNameFallback }
 
     private var activeSessionID: String?
+    private var activeActivityID: String?
+    private var activeActivityNameFallback: String?
+
+    private struct ActiveSessionSnapshot {
+        let sessionID: String?
+        let activityID: String?
+        let activityName: String?
+        let category: AppState
+        let startTime: Date
+        let baseBalance: Int
+    }
+
+    private enum ActiveSessionFetchResult {
+        case active(ActiveSessionSnapshot)
+        case idle
+        case unavailable
+    }
 
     // MARK: - Delta Calculation Internals
 
@@ -85,9 +108,9 @@ final class TimeManager: ObservableObject {
     var formattedBalance: String { formatSeconds(globalBalance) }
     var formattedSessionTime: String { formatSeconds(currentSessionTime) }
 
-    /// True only when device has internet AND server WS confirmed reachable.
+    /// True when REST APIs are reachable and user session exists.
     var isBackendAvailable: Bool {
-        networkMonitor.isConnected && wsClient.isConnectedToServer
+        networkMonitor.isConnected && Auth.auth().currentUser != nil
     }
 
     // MARK: - Init
@@ -113,6 +136,8 @@ final class TimeManager: ObservableObject {
             offlineActivitiesQueue = decoded
         }
 
+        restorePersistedActiveSessionSnapshot()
+
         requestNotificationPermission()
         subscribeToWSEvents()
 
@@ -127,7 +152,19 @@ final class TimeManager: ObservableObject {
             .sink { [weak self] serverUp in
                 if serverUp {
                     self?.syncOfflineData()
+                    Task { [weak self] in
+                        await self?.refreshActiveSessionFromBackend()
+                    }
                 }
+            }
+            .store(in: &cancellables)
+
+        networkMonitor.$isConnected
+            .dropFirst()
+            .filter { $0 }
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.syncOfflineData()
             }
             .store(in: &cancellables)
 
@@ -228,15 +265,15 @@ final class TimeManager: ObservableObject {
     // MARK: - Offline Mechanics
 
     private func startLocalOfflineSession(profile: ActivityProfile, category: AppState) {
-        activeProfile = profile
-        activeSessionID = "offline_\(UUID().uuidString)"
-        sessionStartTime = Date()
-        baseBalance = globalBalance
-        activeCategory = category
-        currentState = category
-        currentSessionTime = 0
-
-        startDeltaTimer()
+        let snapshot = ActiveSessionSnapshot(
+            sessionID: "offline_\(UUID().uuidString)",
+            activityID: profile.id,
+            activityName: profile.name,
+            category: category,
+            startTime: Date(),
+            baseBalance: globalBalance
+        )
+        applyActiveSessionSnapshot(snapshot)
     }
 
     private func stopLocalOfflineSession() {
@@ -270,14 +307,7 @@ final class TimeManager: ObservableObject {
             )
         }
 
-        cancelScheduledNotification()
-        activeProfile = nil
-        activeSessionID = nil
-        sessionStartTime = nil
-        baseBalance = 0
-        activeCategory = .idle
-        currentState = .idle
-        currentSessionTime = 0
+        resetActiveSessionRuntime(clearPersistedState: true)
     }
 
     // MARK: - HTTP Requests
@@ -306,6 +336,21 @@ final class TimeManager: ObservableObject {
             if let http = response as? HTTPURLResponse, http.statusCode != 204 {
                 print("[API] Start rejected (\(http.statusCode)) — falling back to offline")
                 startLocalOfflineSession(profile: fallbackProfile, category: fallbackCategory)
+            } else {
+                let optimisticSnapshot = ActiveSessionSnapshot(
+                    sessionID: activeSessionID,
+                    activityID: fallbackProfile.id,
+                    activityName: fallbackProfile.name,
+                    category: fallbackCategory,
+                    startTime: Date(),
+                    baseBalance: globalBalance
+                )
+
+                await MainActor.run {
+                    self.applyActiveSessionSnapshot(optimisticSnapshot)
+                }
+
+                await refreshActiveSessionFromBackend()
             }
         } catch {
             print("[API] Start failed — falling back to offline")
@@ -335,6 +380,11 @@ final class TimeManager: ObservableObject {
             if let http = response as? HTTPURLResponse, http.statusCode != 204 {
                 print("[API] Stop rejected (\(http.statusCode)) — stopping offline")
                 stopLocalOfflineSession()
+            } else {
+                await MainActor.run {
+                    self.resetActiveSessionRuntime(clearPersistedState: true)
+                }
+                await refreshActiveSessionFromBackend()
             }
         } catch {
             print("[API] Stop failed — stopping offline")
@@ -480,6 +530,7 @@ final class TimeManager: ObservableObject {
                 let profiles = try decoder.decode([ActivityProfile].self, from: data)
 
                 activityProfiles = profiles
+                resolveActiveProfileReference()
             } catch {
                 print("[API] Fetch activities failed: \(error.localizedDescription)")
             }
@@ -511,25 +562,21 @@ final class TimeManager: ObservableObject {
     private func handleTimerStarted(_ payload: [String: AnyCodable]) {
         guard let data = TimerStartedPayload(from: payload) else { return }
 
-        activeSessionID = data.sessionID
-        sessionStartTime = data.startTime
-        baseBalance = data.baseBalance
-        activeCategory = data.activityCategory == "consuming" ? .consuming : .toppingUp
+        let category: AppState = data.activityCategory.lowercased().contains("consum") ? .consuming : .toppingUp
+        let snapshot = ActiveSessionSnapshot(
+            sessionID: data.sessionID,
+            activityID: data.activityID,
+            activityName: data.activityName,
+            category: category,
+            startTime: data.startTime,
+            baseBalance: data.baseBalance
+        )
 
-        activeProfile = activityProfiles.first { $0.id == data.activityID }
-
-        currentState = activeCategory
-        currentSessionTime = 0
-        globalBalance = data.baseBalance
-
-        startDeltaTimer()
+        applyActiveSessionSnapshot(snapshot)
     }
 
     private func handleTimerStopped(_ payload: [String: AnyCodable]) {
         guard let data = TimerStoppedPayload(from: payload) else { return }
-
-        timerCancellable?.cancel()
-        timerCancellable = nil
 
         if data.duration > 0 {
             commitSession(
@@ -539,20 +586,339 @@ final class TimeManager: ObservableObject {
             )
         }
 
-        cancelScheduledNotification()
-        activeProfile = nil
-        activeSessionID = nil
-        sessionStartTime = nil
-        baseBalance = 0
-        activeCategory = .idle
-        currentState = .idle
-        currentSessionTime = 0
+        resetActiveSessionRuntime(clearPersistedState: true)
     }
 
     private func handleBalanceUpdated(_ payload: [String: AnyCodable]) {
         guard offlineQueue.isEmpty else { return }
         guard let data = BalanceUpdatedPayload(from: payload) else { return }
         globalBalance = data.balance
+    }
+
+    // MARK: - Active Session Persistence & Catch-Up
+
+    private func applyActiveSessionSnapshot(_ snapshot: ActiveSessionSnapshot) {
+        activeSessionID = snapshot.sessionID
+        activeActivityID = snapshot.activityID
+        activeActivityNameFallback = snapshot.activityName
+        sessionStartTime = snapshot.startTime
+        baseBalance = snapshot.baseBalance
+        activeCategory = snapshot.category
+        currentState = snapshot.category
+
+        resolveActiveProfileReference()
+        recalculateCurrentSessionMetrics()
+        startDeltaTimerIfNeeded()
+        persistActiveSessionSnapshot()
+    }
+
+    private func resetActiveSessionRuntime(clearPersistedState: Bool) {
+        timerCancellable?.cancel()
+        timerCancellable = nil
+        cancelScheduledNotification()
+
+        activeProfile = nil
+        activeActivityID = nil
+        activeActivityNameFallback = nil
+        activeSessionID = nil
+        sessionStartTime = nil
+        baseBalance = 0
+        activeCategory = .idle
+        currentState = .idle
+        currentSessionTime = 0
+
+        if clearPersistedState {
+            clearPersistedActiveSessionSnapshot()
+        }
+    }
+
+    private func recalculateCurrentSessionMetrics() {
+        guard let start = sessionStartTime, currentState != .idle else { return }
+
+        let elapsed = max(0, Int(Date().timeIntervalSince(start)))
+        currentSessionTime = elapsed
+
+        switch activeCategory {
+        case .toppingUp:
+            globalBalance = baseBalance + elapsed
+        case .consuming:
+            globalBalance = max(baseBalance - elapsed, 0)
+        case .idle:
+            break
+        }
+    }
+
+    private func startDeltaTimerIfNeeded() {
+        guard currentState != .idle, sessionStartTime != nil else {
+            timerCancellable?.cancel()
+            timerCancellable = nil
+            return
+        }
+        startDeltaTimer()
+    }
+
+    private func persistActiveSessionSnapshot() {
+        guard currentState != .idle, let startTime = sessionStartTime else {
+            clearPersistedActiveSessionSnapshot()
+            return
+        }
+
+        let defaults = UserDefaults.standard
+        defaults.set(activeSessionID, forKey: Keys.activeSessionID)
+        defaults.set(activeProfile?.id ?? activeActivityID, forKey: Keys.activeActivityID)
+        defaults.set(activeProfile?.name ?? activeActivityNameFallback, forKey: Keys.activeActivityName)
+        defaults.set(startTime.timeIntervalSince1970, forKey: Keys.activeSessionStartTimestamp)
+        defaults.set(baseBalance, forKey: Keys.activeSessionBaseBalance)
+        defaults.set(activeCategory.rawValue, forKey: Keys.activeSessionCategory)
+    }
+
+    private func restorePersistedActiveSessionSnapshot() {
+        let defaults = UserDefaults.standard
+
+        guard let categoryRaw = defaults.string(forKey: Keys.activeSessionCategory),
+              let category = AppState(rawValue: categoryRaw),
+              let timestamp = defaults.object(forKey: Keys.activeSessionStartTimestamp) as? Double else {
+            return
+        }
+
+        let snapshot = ActiveSessionSnapshot(
+            sessionID: defaults.string(forKey: Keys.activeSessionID),
+            activityID: defaults.string(forKey: Keys.activeActivityID),
+            activityName: defaults.string(forKey: Keys.activeActivityName),
+            category: category,
+            startTime: Date(timeIntervalSince1970: timestamp),
+            baseBalance: defaults.object(forKey: Keys.activeSessionBaseBalance) as? Int ?? globalBalance
+        )
+
+        applyActiveSessionSnapshot(snapshot)
+    }
+
+    private func clearPersistedActiveSessionSnapshot() {
+        let defaults = UserDefaults.standard
+        defaults.removeObject(forKey: Keys.activeSessionID)
+        defaults.removeObject(forKey: Keys.activeActivityID)
+        defaults.removeObject(forKey: Keys.activeActivityName)
+        defaults.removeObject(forKey: Keys.activeSessionStartTimestamp)
+        defaults.removeObject(forKey: Keys.activeSessionBaseBalance)
+        defaults.removeObject(forKey: Keys.activeSessionCategory)
+    }
+
+    private func resolveActiveProfileReference() {
+        if let activeActivityID,
+           let profile = activityProfiles.first(where: { $0.id == activeActivityID }) {
+            activeProfile = profile
+            activeActivityNameFallback = profile.name
+            return
+        }
+
+        if let activeActivityNameFallback,
+           let profile = activityProfiles.first(where: {
+               $0.name.caseInsensitiveCompare(activeActivityNameFallback) == .orderedSame
+           }) {
+            activeProfile = profile
+            activeActivityID = profile.id
+            activeActivityNameFallback = profile.name
+        }
+    }
+
+    private func refreshActiveSessionFromBackend() async {
+        let result = await fetchActiveSessionStateFromBackend()
+
+        await MainActor.run {
+            switch result {
+            case .active(let snapshot):
+                self.applyActiveSessionSnapshot(snapshot)
+            case .idle:
+                if self.activeSessionID?.hasPrefix("offline_") == true {
+                    self.recalculateCurrentSessionMetrics()
+                    self.startDeltaTimerIfNeeded()
+                } else {
+                    self.resetActiveSessionRuntime(clearPersistedState: true)
+                }
+            case .unavailable:
+                self.recalculateCurrentSessionMetrics()
+                self.startDeltaTimerIfNeeded()
+            }
+        }
+    }
+
+    private func fetchActiveSessionStateFromBackend() async -> ActiveSessionFetchResult {
+        guard networkMonitor.isConnected else { return .unavailable }
+
+        let token: String
+        do {
+            token = try await AuthManager.getIDToken()
+        } catch {
+            return .unavailable
+        }
+
+        for endpoint in APIConfig.timerStateURLCandidates {
+            guard let url = URL(string: endpoint) else { continue }
+
+            var request = URLRequest(url: url)
+            request.httpMethod = "GET"
+            request.timeoutInterval = 8
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+
+                guard let http = response as? HTTPURLResponse else { continue }
+
+                if http.statusCode == 404 || http.statusCode == 405 {
+                    continue
+                }
+
+                if http.statusCode == 204 {
+                    return .idle
+                }
+
+                guard (200...299).contains(http.statusCode) else {
+                    return .unavailable
+                }
+
+                let parsedResult = parseActiveSessionFetchResult(from: data)
+                if case .unavailable = parsedResult {
+                    continue
+                }
+
+                return parsedResult
+            } catch {
+                print("[API] Active session fetch failed for \(endpoint): \(error.localizedDescription)")
+            }
+        }
+
+        return .unavailable
+    }
+
+    private func parseActiveSessionFetchResult(from data: Data) -> ActiveSessionFetchResult {
+        guard let rawObject = try? JSONSerialization.jsonObject(with: data),
+              let envelope = rawObject as? [String: Any] else {
+            return .unavailable
+        }
+
+        let root = (envelope["session"] as? [String: Any])
+            ?? (envelope["data"] as? [String: Any])
+            ?? envelope
+
+        let activeFlag = boolValue(from: root, keys: ["active", "isActive", "running"])
+            ?? boolValue(from: envelope, keys: ["active", "isActive", "running"])
+
+        if activeFlag == false {
+            return .idle
+        }
+
+        guard let startTime = dateValue(from: root, keys: ["startTime", "startedAt", "started_at", "start"])
+                ?? dateValue(from: envelope, keys: ["startTime", "startedAt", "started_at", "start"]) else {
+            return activeFlag == true ? .unavailable : .idle
+        }
+
+        let categoryRaw = stringValue(from: root, keys: ["activityCategory", "category", "type"])
+            ?? stringValue(from: envelope, keys: ["activityCategory", "category", "type"])
+            ?? activeCategory.rawValue
+
+        let category: AppState = categoryRaw.lowercased().contains("consum") ? .consuming : .toppingUp
+
+        let baseBalance = intValue(from: root, keys: ["baseBalance", "startingBalance", "balanceAtStart", "base_balance"])
+            ?? intValue(from: envelope, keys: ["baseBalance", "startingBalance", "balanceAtStart", "base_balance"])
+            ?? globalBalance
+
+        let snapshot = ActiveSessionSnapshot(
+            sessionID: stringValue(from: root, keys: ["sessionID", "sessionId", "id"])
+                ?? stringValue(from: envelope, keys: ["sessionID", "sessionId", "id"]),
+            activityID: stringValue(from: root, keys: ["activityID", "activityId"])
+                ?? stringValue(from: envelope, keys: ["activityID", "activityId"]),
+            activityName: stringValue(from: root, keys: ["activityName", "name"])
+                ?? stringValue(from: envelope, keys: ["activityName", "name"]),
+            category: category,
+            startTime: startTime,
+            baseBalance: baseBalance
+        )
+
+        return .active(snapshot)
+    }
+
+    private func stringValue(from dict: [String: Any], keys: [String]) -> String? {
+        for key in keys {
+            if let value = dict[key] as? String, !value.isEmpty {
+                return value
+            }
+        }
+        return nil
+    }
+
+    private func boolValue(from dict: [String: Any], keys: [String]) -> Bool? {
+        for key in keys {
+            if let value = dict[key] as? Bool {
+                return value
+            }
+            if let value = dict[key] as? NSNumber {
+                return value.boolValue
+            }
+            if let value = dict[key] as? String {
+                let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                if normalized == "true" || normalized == "1" {
+                    return true
+                }
+                if normalized == "false" || normalized == "0" {
+                    return false
+                }
+            }
+        }
+        return nil
+    }
+
+    private func intValue(from dict: [String: Any], keys: [String]) -> Int? {
+        for key in keys {
+            if let value = dict[key] as? Int {
+                return value
+            }
+            if let value = dict[key] as? Double {
+                return Int(value)
+            }
+            if let value = dict[key] as? NSNumber {
+                return value.intValue
+            }
+            if let value = dict[key] as? String, let intValue = Int(value) {
+                return intValue
+            }
+        }
+        return nil
+    }
+
+    private func dateValue(from dict: [String: Any], keys: [String]) -> Date? {
+        for key in keys {
+            guard let raw = dict[key] else { continue }
+
+            if let seconds = raw as? TimeInterval {
+                return seconds > 1_000_000_000_000
+                    ? Date(timeIntervalSince1970: seconds / 1000.0)
+                    : Date(timeIntervalSince1970: seconds)
+            }
+
+            if let number = raw as? NSNumber {
+                let seconds = number.doubleValue
+                return seconds > 1_000_000_000_000
+                    ? Date(timeIntervalSince1970: seconds / 1000.0)
+                    : Date(timeIntervalSince1970: seconds)
+            }
+
+            if let text = raw as? String {
+                let formatterWithFractional = ISO8601DateFormatter()
+                formatterWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+                if let parsed = formatterWithFractional.date(from: text) {
+                    return parsed
+                }
+
+                let formatterBasic = ISO8601DateFormatter()
+                formatterBasic.formatOptions = [.withInternetDateTime]
+                if let parsed = formatterBasic.date(from: text) {
+                    return parsed
+                }
+            }
+        }
+
+        return nil
     }
 
     // MARK: - Delta Calculation Timer
@@ -566,26 +932,13 @@ final class TimeManager: ObservableObject {
     }
 
     private func deltaTick() {
-        guard let start = sessionStartTime else { return }
+        recalculateCurrentSessionMetrics()
 
-        let elapsed = Int(Date().timeIntervalSince(start))
-        currentSessionTime = elapsed
+        guard currentState == .consuming, globalBalance <= 0 else { return }
 
-        switch activeCategory {
-        case .toppingUp:
-            globalBalance = baseBalance + elapsed
-
-        case .consuming:
-            globalBalance = max(baseBalance - elapsed, 0)
-            if globalBalance <= 0 {
-                triggerHaptic(.heavy)
-                if !networkMonitor.isConnected {
-                    stopLocalOfflineSession()
-                }
-            }
-
-        case .idle:
-            break
+        triggerHaptic(.heavy)
+        if !networkMonitor.isConnected {
+            stopLocalOfflineSession()
         }
     }
 
@@ -598,6 +951,8 @@ final class TimeManager: ObservableObject {
         cancelScheduledNotification()
 
         activeProfile = nil
+        activeActivityID = nil
+        activeActivityNameFallback = nil
         activeSessionID = nil
         sessionStartTime = nil
         baseBalance = 0
@@ -617,13 +972,16 @@ final class TimeManager: ObservableObject {
         UserDefaults.standard.removeObject(forKey: Keys.sessionLogs)
         UserDefaults.standard.removeObject(forKey: Keys.offlineQueue)
         UserDefaults.standard.removeObject(forKey: Keys.offlineActivitiesQueue)
+        clearPersistedActiveSessionSnapshot()
     }
 
     func handleBackgrounded() {
         // Guard: already suspended — inactive→background fires twice
-        guard wsClient.isConnected || timerCancellable != nil else { return }
+        guard wsClient.isConnected || timerCancellable != nil || currentState != .idle else { return }
 
         print("[Lifecycle] App backgrounded — suspending socket & timer")
+
+        persistActiveSessionSnapshot()
 
         timerCancellable?.cancel()
         timerCancellable = nil
@@ -646,20 +1004,12 @@ final class TimeManager: ObservableObject {
         wsClient.connect()
         fetchActivities()
 
-        if let start = sessionStartTime, currentState != .idle {
-            let elapsed = Int(Date().timeIntervalSince(start))
-            currentSessionTime = elapsed
+        restorePersistedActiveSessionSnapshot()
+        recalculateCurrentSessionMetrics()
+        startDeltaTimerIfNeeded()
 
-            switch activeCategory {
-            case .toppingUp:
-                globalBalance = baseBalance + elapsed
-            case .consuming:
-                globalBalance = max(baseBalance - elapsed, 0)
-            case .idle:
-                break
-            }
-
-            startDeltaTimer()
+        Task { [weak self] in
+            await self?.refreshActiveSessionFromBackend()
         }
     }
 
