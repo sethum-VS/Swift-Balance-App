@@ -41,6 +41,10 @@ struct LoginView: View {
         Color(hex: 0x1A1A1A)
     }
 
+    private var dividerColor: Color {
+        Color.white.opacity(0.14)
+    }
+
     var body: some View {
         ZStack {
             backgroundColor
@@ -144,6 +148,50 @@ struct LoginView: View {
                     .buttonStyle(.plain)
                     .disabled(authManager.isLoading || !isFormValid)
                     .opacity(authManager.isLoading || !isFormValid ? 0.50 : 1.0)
+
+                    HStack(spacing: 12) {
+                        Rectangle()
+                            .fill(dividerColor)
+                            .frame(height: 1)
+
+                        Text("OR")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(.white.opacity(0.45))
+
+                        Rectangle()
+                            .fill(dividerColor)
+                            .frame(height: 1)
+                    }
+                    .padding(.top, 2)
+
+                    Button(action: submitGoogleAuth) {
+                        HStack(spacing: 10) {
+                            Text("G")
+                                .font(.system(size: 18, weight: .bold, design: .rounded))
+                                .foregroundStyle(Color(hex: 0x4285F4))
+
+                            Text("Continue with Google")
+                                .font(.system(size: 16, weight: .semibold, design: .rounded))
+                                .foregroundStyle(.black.opacity(0.88))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 13)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(.white)
+                        )
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(authManager.isLoading)
+                    .opacity(authManager.isLoading ? 0.55 : 1.0)
+
+                    if isSignUp {
+                        Text("After sign up, verify your email before you can sign in.")
+                            .font(.footnote.weight(.semibold))
+                            .foregroundStyle(Color(hex: 0xFDE68A))
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 6)
+                    }
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 28)
@@ -199,6 +247,15 @@ struct LoginView: View {
             }
         } else {
             authManager.signIn(email: email, password: password)
+        }
+    }
+
+    private func submitGoogleAuth() {
+        guard !authManager.isLoading else { return }
+        focusedField = nil
+
+        Task {
+            await authManager.signInWithGoogle()
         }
     }
 }

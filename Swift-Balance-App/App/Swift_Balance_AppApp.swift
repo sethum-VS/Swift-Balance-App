@@ -8,6 +8,7 @@
 import SwiftUI
 import Combine
 import FirebaseCore
+import GoogleSignIn
 import UIKit
 
 final class AppDelegate: NSObject, UIApplicationDelegate {
@@ -57,6 +58,9 @@ struct Swift_Balance_AppApp: App {
                 } else {
                     webSocketClient.disconnect(reason: "auth state changed to signed out")
                 }
+            }
+            .onOpenURL { url in
+                _ = GIDSignIn.sharedInstance.handle(url)
             }
         }
         .onChange(of: scenePhase) { newPhase in
