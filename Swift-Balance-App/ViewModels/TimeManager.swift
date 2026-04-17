@@ -130,6 +130,13 @@ final class TimeManager: ObservableObject {
                 }
             }
             .store(in: &cancellables)
+
+        NotificationCenter.default.publisher(for: .userDidSignOut)
+            .receive(on: DispatchQueue.main)
+            .sink { [weak self] _ in
+                self?.clearLocalData()
+            }
+            .store(in: &cancellables)
     }
 
     // MARK: - Profile Helpers
@@ -583,6 +590,34 @@ final class TimeManager: ObservableObject {
     }
 
     // MARK: - Background / Foreground Lifecycle
+
+    func clearLocalData() {
+        timerCancellable?.cancel()
+        timerCancellable = nil
+
+        cancelScheduledNotification()
+
+        activeProfile = nil
+        activeSessionID = nil
+        sessionStartTime = nil
+        baseBalance = 0
+        activeCategory = .idle
+
+        currentState = .idle
+        currentSessionTime = 0
+        globalBalance = 0
+        showZeroBalanceError = false
+        sessionLogs = []
+        activityProfiles = []
+        offlineQueue = []
+        offlineActivitiesQueue = []
+        isLoading = false
+
+        UserDefaults.standard.removeObject(forKey: Keys.globalBalance)
+        UserDefaults.standard.removeObject(forKey: Keys.sessionLogs)
+        UserDefaults.standard.removeObject(forKey: Keys.offlineQueue)
+        UserDefaults.standard.removeObject(forKey: Keys.offlineActivitiesQueue)
+    }
 
     func handleBackgrounded() {
         // Guard: already suspended — inactive→background fires twice
