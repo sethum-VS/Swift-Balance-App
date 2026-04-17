@@ -63,6 +63,8 @@ final class WebSocketClient: ObservableObject {
 
     /// Opens the WebSocket connection and starts the receive loop.
     func connect() {
+        shouldReconnect = true
+
         guard webSocketTask == nil else { return }
         guard !isConnecting else { return }
 
@@ -72,7 +74,6 @@ final class WebSocketClient: ObservableObject {
         }
         _ = currentUser
 
-        shouldReconnect = true
         isConnecting = true
         let connectID = UUID()
         activeConnectID = connectID
@@ -163,9 +164,9 @@ final class WebSocketClient: ObservableObject {
                 self.receiveLoop(task: task)
 
             case .failure(let error):
-                guard self.shouldReconnect else { return }
-                print("[WS] Receive error: \(error.localizedDescription)")
-                self.handleDisconnect(unexpected: true)
+                let shouldAttemptReconnect = self.shouldReconnect
+                print("[WS] Receive error: \(error.localizedDescription) [reconnect=\(shouldAttemptReconnect)]")
+                self.handleDisconnect(unexpected: shouldAttemptReconnect)
             }
         }
     }
@@ -211,10 +212,11 @@ final class WebSocketClient: ObservableObject {
                 }
                 self.webSocketTask?.sendPing { error in
                     if let error = error {
-                        print("[WS] Ping failed: \(error.localizedDescription)")
+                        let shouldAttemptReconnect = self.shouldReconnect
+                        print("[WS] Ping failed: \(error.localizedDescription) [reconnect=\(shouldAttemptReconnect)]")
                         self.pingCancellable?.cancel()
                         self.pingCancellable = nil
-                        self.handleDisconnect(unexpected: true)
+                        self.handleDisconnect(unexpected: shouldAttemptReconnect)
                         return
                     }
 
@@ -235,14 +237,20 @@ final class WebSocketClient: ObservableObject {
         activeConnectID = nil
         isConnecting = false
 
+        let shouldAttemptReconnect = unexpected && shouldReconnect
+
         DispatchQueue.main.async {
             self.webSocketTask = nil
             self.isConnected = false
             self.isConnectedToServer = false
-        }
 
-        guard unexpected, shouldReconnect else { return }
-        attemptReconnect()
+            guard shouldAttemptReconnect else {
+                print("[WS] Reconnect skipped (unexpected=\(unexpected), shouldReconnect=\(self.shouldReconnect))")
+                return
+            }
+
+            self.attemptReconnect()
+        }
     }
 
     /// Reconnects with exponential backoff.
