@@ -37,6 +37,11 @@ struct ContentView: View {
         }
         .tint(Color(hex: 0x6C63FF))
         .preferredColorScheme(.dark)
+        .alert("Out of Time!", isPresented: $timeManager.showTopUpWarning) {
+            Button("Got it", role: .cancel) { }
+        } message: {
+            Text("You have run out of earned time. Please start a Top-Up activity to earn more.")
+        }
     }
 }
 

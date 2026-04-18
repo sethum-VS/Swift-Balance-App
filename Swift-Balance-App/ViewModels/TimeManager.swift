@@ -39,10 +39,11 @@ final class TimeManager: ObservableObject {
     private static let defaultGuestActivities: [ActivityProfile] = [
         ActivityProfile(id: "guest_1", name: "Reading", category: .toppingUp, iconName: "book.fill", creditPerHour: 60.0),
         ActivityProfile(id: "guest_2", name: "Exercise", category: .toppingUp, iconName: "figure.run", creditPerHour: 60.0),
-        ActivityProfile(id: "guest_3", name: "Meditation", category: .toppingUp, iconName: "brain.head.profile", creditPerHour: 60.0),
-        ActivityProfile(id: "guest_4", name: "Gaming", category: .consuming, iconName: "gamecontroller.fill", creditPerHour: 60.0),
-        ActivityProfile(id: "guest_5", name: "Social Media", category: .consuming, iconName: "bubble.left.and.bubble.right.fill", creditPerHour: 60.0),
-        ActivityProfile(id: "guest_6", name: "Streaming", category: .consuming, iconName: "play.tv.fill", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_3", name: "Meditation", category: .toppingUp, iconName: "leaf.fill", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_4", name: "Deep Work", category: .toppingUp, iconName: "brain.head.profile", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_5", name: "Gaming", category: .consuming, iconName: "gamecontroller.fill", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_6", name: "Social Media", category: .consuming, iconName: "bubble.left.and.bubble.right.fill", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_7", name: "Streaming", category: .consuming, iconName: "play.tv.fill", creditPerHour: 60.0),
     ]
 
     // MARK: - Published State (Dual Clock + Offline)
@@ -56,6 +57,8 @@ final class TimeManager: ObservableObject {
     @Published var currentSessionTime: Int = 0
 
     @Published var showZeroBalanceError: Bool = false
+
+    @Published var showTopUpWarning: Bool = false
 
     @Published var sessionLogs: [SessionLog] = []
 
@@ -980,10 +983,10 @@ final class TimeManager: ObservableObject {
 
         guard currentState == .consuming, globalBalance <= 0 else { return }
 
+        // Circuit breaker: CR depleted — force stop the consuming session
         triggerHaptic(.heavy)
-        if !networkMonitor.isConnected {
-            stopLocalOfflineSession()
-        }
+        stopLocalOfflineSession()
+        showTopUpWarning = true
     }
 
     // MARK: - Background / Foreground Lifecycle
