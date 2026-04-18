@@ -2,7 +2,7 @@
 
 > A **time-equity** system where users earn credits through productive activities and spend them on leisure — enforcing a conscious balance between growth and entertainment.
 
-![Swift App Demo](https://imgur.com/a/yONCzzR)
+<img src="https://github.com/sethum-VS/myGIF/blob/main/Simulator%20Screen%20Recording%20-%20iPhone%2017%20Pro%20-%202026-04-19%20at%2002.57.14%20(1).gif" width="500" height="auto">
 
 ---
 
