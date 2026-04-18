@@ -47,34 +47,47 @@ struct Swift_Balance_AppApp: App {
         _authManager = StateObject(wrappedValue: AuthManager())
     }
 
+    /// Tracks whether the splash animation has completed.
+    @State private var splashFinished: Bool = false
+
     var body: some Scene {
         WindowGroup {
-            Group {
-                if authManager.isAuthenticated {
-                    ContentView()
-                        .environmentObject(timeManager)
-                        .environmentObject(authManager)
-                } else {
-                    LoginView()
-                        .environmentObject(authManager)
-                }
-            }
-            .onChange(of: authManager.isAuthenticated) { isAuthenticated in
-                if isAuthenticated {
-                    if !authManager.isOfflineMode {
-                        // Authenticated user: connect to backend
-                        webSocketClient.connect()
-                        timeManager.fetchActivities()
+            ZStack {
+                // Main app content (renders underneath immediately)
+                Group {
+                    if authManager.isAuthenticated {
+                        ContentView()
+                            .environmentObject(timeManager)
+                            .environmentObject(authManager)
                     } else {
-                        // Guest mode: load local defaults only
-                        timeManager.fetchActivities()
+                        LoginView()
+                            .environmentObject(authManager)
                     }
-                } else {
-                    webSocketClient.disconnect(reason: "auth state changed to signed out")
                 }
-            }
-            .onOpenURL { url in
-                _ = GIDSignIn.sharedInstance.handle(url)
+                .onChange(of: authManager.isAuthenticated) { isAuthenticated in
+                    if isAuthenticated {
+                        if !authManager.isOfflineMode {
+                            // Authenticated user: connect to backend
+                            webSocketClient.connect()
+                            timeManager.fetchActivities()
+                        } else {
+                            // Guest mode: load local defaults only
+                            timeManager.fetchActivities()
+                        }
+                    } else {
+                        webSocketClient.disconnect(reason: "auth state changed to signed out")
+                    }
+                }
+                .onOpenURL { url in
+                    _ = GIDSignIn.sharedInstance.handle(url)
+                }
+
+                // Splash overlay — sits on top until animation completes
+                if !splashFinished {
+                    SplashView(isFinished: $splashFinished)
+                        .transition(.opacity)
+                        .zIndex(1)
+                }
             }
         }
         .onChange(of: scenePhase) { newPhase in
