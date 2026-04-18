@@ -2,7 +2,7 @@
 
 > A **time-equity** system where users earn credits through productive activities and spend them on leisure — enforcing a conscious balance between growth and entertainment.
 
-<img src="https://github.com/sethum-VS/myGIF/blob/main/Simulator%20Screen%20Recording%20-%20iPhone%2017%20Pro%20-%202026-04-19%20at%2002.57.14%20(1).gif" width="500" height="auto">
+<img src="https://github.com/sethum-VS/myGIF/blob/main/Simulator%20Screen%20Recording%20-%20iPhone%2017%20Pro%20-%202026-04-19%20at%2002.57.14%20(1).gif" width="300" height="auto">
 
 ---
 
@@ -27,13 +27,6 @@
 | **UI Framework** | SwiftUI (iOS 16+) |
 | **Architecture** | MVVM (Model-View-ViewModel) |
 | **Authentication** | Firebase Auth (Email/Password, Google Sign-In) |
-| **Real-Time Sync** | `URLSessionWebSocketTask` + Combine |
-| **Networking** | `URLSession` (async/await) |
-| **State Management** | `@Published` + Combine pipelines |
-| **Local Persistence** | `UserDefaults` (offline queues, balance, session state) |
-| **Network Monitoring** | `NWPathMonitor` (Network framework) |
-| **Notifications** | `UNUserNotificationCenter` (consume expiry alerts) |
-| **Haptics** | `UIImpactFeedbackGenerator` / `UINotificationFeedbackGenerator` |
 | **Backend** | Go (deployed on Google Cloud Run) |
 | **Database** | Turso (LibSQL — edge-replicated SQLite) |
 
@@ -99,22 +92,6 @@ When the app returns to foreground:
 3. Restarts the delta timer.
 4. Reconnects the WebSocket and fetches the latest server state via `GET /api/timer/state`.
 5. If the server reports a different state (e.g., another client stopped the timer), the server state wins.
-
-### State Persistence Strategy
-
-Critical state is persisted to `UserDefaults` so the app survives force-closes:
-
-| Key | Purpose |
-|---|---|
-| `balance_timeBalance` | Current global CR balance |
-| `balance_sessionLogs` | Local session history (JSON) |
-| `balance_offlineQueue` | Pending offline sessions for sync |
-| `balance_offlineActivitiesQueue` | Pending offline-created activities |
-| `balance_activeSession*` | Active session snapshot (ID, start time, base balance, category) |
-| `balance_guestActivities` | Guest mode activity profiles |
-| `isOfflineGuest` | Whether the user is in offline/guest mode |
-
----
 
 ## System Interconnectivity
 
