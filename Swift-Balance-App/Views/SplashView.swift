@@ -19,8 +19,6 @@ struct SplashView: View {
     @State private var titleOpacity: Double = 0
     @State private var titleOffset: CGFloat = 20
     @State private var subtitleOpacity: Double = 0
-    @State private var flameScale: CGFloat = 0.6
-    @State private var flameOpacity: Double = 0
     @State private var ringTrim: CGFloat = 0
     @State private var dismissOpacity: Double = 1
 
@@ -62,20 +60,6 @@ struct SplashView: View {
                         )
                         .frame(width: 120, height: 120)
                         .rotationEffect(.degrees(-90))
-
-                    // Flame accent — simmering below the bolt
-                    Image(systemName: "flame.fill")
-                        .font(.system(size: 20, weight: .bold))
-                        .foregroundStyle(
-                            LinearGradient(
-                                colors: [Color(hex: 0xFF9500), Color(hex: 0xFF2D55)],
-                                startPoint: .bottom,
-                                endPoint: .top
-                            )
-                        )
-                        .scaleEffect(flameScale)
-                        .opacity(flameOpacity)
-                        .offset(y: 36)
 
                     // Main brand icon
                     RoundedRectangle(cornerRadius: 22, style: .continuous)
@@ -131,28 +115,14 @@ struct SplashView: View {
             ringTrim = 1.0
         }
 
-        // Phase 3: Flame appears and simmers (0.4s)
-        withAnimation(.easeOut(duration: 0.4).delay(0.4)) {
-            flameOpacity = 1.0
-            flameScale = 1.0
-        }
-        // Flame pulse loop
-        withAnimation(
-            .easeInOut(duration: 0.6)
-            .repeatForever(autoreverses: true)
-            .delay(0.8)
-        ) {
-            flameScale = 1.15
-        }
-
-        // Phase 4: Title slides up (0.6s)
-        withAnimation(.easeOut(duration: 0.5).delay(0.6)) {
+        // Phase 3: Title slides up (0.5s)
+        withAnimation(.easeOut(duration: 0.5).delay(0.5)) {
             titleOpacity = 1.0
             titleOffset = 0
         }
 
-        // Phase 5: Subtitle fades in (0.9s)
-        withAnimation(.easeOut(duration: 0.4).delay(0.9)) {
+        // Phase 4: Subtitle fades in (0.8s)
+        withAnimation(.easeOut(duration: 0.4).delay(0.8)) {
             subtitleOpacity = 1.0
         }
 
