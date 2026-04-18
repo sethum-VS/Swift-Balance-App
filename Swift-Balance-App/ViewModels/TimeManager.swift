@@ -27,7 +27,23 @@ final class TimeManager: ObservableObject {
         static let activeSessionCategory = "balance_activeSessionCategory"
         static let activeActivityID = "balance_activeActivityID"
         static let activeActivityName = "balance_activeActivityName"
+        static let guestActivities = "balance_guestActivities"
     }
+
+    /// True when there is no Firebase user (guest/offline mode).
+    private var isGuestMode: Bool {
+        Auth.auth().currentUser == nil
+    }
+
+    /// Default seed activities for guest users.
+    private static let defaultGuestActivities: [ActivityProfile] = [
+        ActivityProfile(id: "guest_1", name: "Reading", category: .toppingUp, iconName: "book.fill", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_2", name: "Exercise", category: .toppingUp, iconName: "figure.run", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_3", name: "Meditation", category: .toppingUp, iconName: "brain.head.profile", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_4", name: "Gaming", category: .consuming, iconName: "gamecontroller.fill", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_5", name: "Social Media", category: .consuming, iconName: "bubble.left.and.bubble.right.fill", creditPerHour: 60.0),
+        ActivityProfile(id: "guest_6", name: "Streaming", category: .consuming, iconName: "play.tv.fill", creditPerHour: 60.0),
+    ]
 
     // MARK: - Published State (Dual Clock + Offline)
 
@@ -43,7 +59,16 @@ final class TimeManager: ObservableObject {
 
     @Published var sessionLogs: [SessionLog] = []
 
-    @Published var activityProfiles: [ActivityProfile] = []
+    @Published var activityProfiles: [ActivityProfile] = [] {
+        didSet {
+            // Persist locally for guest mode survival across app restarts
+            if isGuestMode {
+                if let encoded = try? JSONEncoder().encode(activityProfiles) {
+                    UserDefaults.standard.set(encoded, forKey: Keys.guestActivities)
+                }
+            }
+        }
+    }
 
     @Published var isLoading: Bool = false
 
@@ -194,6 +219,9 @@ final class TimeManager: ObservableObject {
         )
         
         activityProfiles.append(profile)
+        
+        // Guest mode: skip networking, data is already persisted via didSet
+        guard !isGuestMode else { return }
         
         if isBackendAvailable {
             postActivity(profile)
@@ -445,6 +473,9 @@ final class TimeManager: ObservableObject {
     }
 
     private func syncOfflineData() {
+        // Guest mode: no backend to sync with
+        guard !isGuestMode else { return }
+
         Task {
             let encoder = JSONEncoder()
             encoder.dateEncodingStrategy = .iso8601
@@ -507,6 +538,19 @@ final class TimeManager: ObservableObject {
     }
 
     func fetchActivities() {
+        // Guest mode: load from local UserDefaults or provide defaults
+        if isGuestMode {
+            if let data = UserDefaults.standard.data(forKey: Keys.guestActivities),
+               let decoded = try? JSONDecoder().decode([ActivityProfile].self, from: data),
+               !decoded.isEmpty {
+                activityProfiles = decoded
+            } else if activityProfiles.isEmpty {
+                activityProfiles = Self.defaultGuestActivities
+            }
+            resolveActiveProfileReference()
+            return
+        }
+
         Task {
             guard let url = URL(string: APIConfig.activitiesURL) else { return }
 
@@ -994,6 +1038,17 @@ final class TimeManager: ObservableObject {
     }
 
     func handleForegrounded() {
+        // Guest mode: restore local state only, no networking
+        if isGuestMode {
+            print("[Lifecycle] App foregrounded (guest mode) — restoring local state")
+            cancelScheduledNotification()
+            fetchActivities()
+            restorePersistedActiveSessionSnapshot()
+            recalculateCurrentSessionMetrics()
+            startDeltaTimerIfNeeded()
+            return
+        }
+
         guard Auth.auth().currentUser != nil else {
             wsClient.disconnect(reason: "user session unavailable")
             return

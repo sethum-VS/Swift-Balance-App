@@ -53,8 +53,14 @@ struct Swift_Balance_AppApp: App {
             }
             .onChange(of: authManager.isAuthenticated) { isAuthenticated in
                 if isAuthenticated {
-                    webSocketClient.connect()
-                    timeManager.fetchActivities()
+                    if !authManager.isOfflineMode {
+                        // Authenticated user: connect to backend
+                        webSocketClient.connect()
+                        timeManager.fetchActivities()
+                    } else {
+                        // Guest mode: load local defaults only
+                        timeManager.fetchActivities()
+                    }
                 } else {
                     webSocketClient.disconnect(reason: "auth state changed to signed out")
                 }

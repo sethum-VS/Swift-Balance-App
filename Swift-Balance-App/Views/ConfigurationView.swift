@@ -6,6 +6,7 @@
 //
 
 import SwiftUI
+import FirebaseAuth
 
 /// Tab 3 — manage activity profiles (add, view, delete).
 struct ConfigurationView: View {
@@ -58,8 +59,24 @@ struct ConfigurationView: View {
                     }
 
                     Section {
-                        Button("Sign Out", role: .destructive) {
-                            authManager.signOut()
+                        if Auth.auth().currentUser == nil {
+                            // Guest mode: upsell account creation
+                            Button {
+                                authManager.isOfflineMode = false
+                                authManager.isAuthenticated = false
+                            } label: {
+                                HStack(spacing: 10) {
+                                    Image(systemName: "icloud.and.arrow.up")
+                                        .foregroundStyle(Color(hex: 0x00C9FF))
+                                    Text("Create Account to Sync")
+                                        .foregroundStyle(.white)
+                                }
+                            }
+                        } else {
+                            // Authenticated: sign out
+                            Button("Sign Out", role: .destructive) {
+                                authManager.signOut()
+                            }
                         }
                     }
                 }

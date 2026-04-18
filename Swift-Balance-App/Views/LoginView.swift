@@ -232,6 +232,33 @@ struct LoginView: View {
                     .disabled(authManager.isLoading)
                     .opacity(authManager.isLoading ? 0.55 : 1.0)
 
+                    // Guest / Offline Mode
+                    Button {
+                        authManager.continueOffline()
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "wifi.slash")
+                                .font(.system(size: 14, weight: .semibold))
+
+                            Text("Continue Offline (No Account)")
+                                .font(.system(size: 14, weight: .semibold, design: .rounded))
+                        }
+                        .frame(maxWidth: .infinity)
+                        .padding(.vertical, 12)
+                        .background(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .fill(Color.clear)
+                        )
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                                .stroke(Color.white.opacity(0.18), lineWidth: 1)
+                        )
+                        .foregroundStyle(.white.opacity(0.55))
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(authManager.isLoading)
+                    .opacity(authManager.isLoading ? 0.45 : 1.0)
+
                     if isSignUp {
                         Text("After sign up, verify your email before you can sign in.")
                             .font(.footnote.weight(.semibold))

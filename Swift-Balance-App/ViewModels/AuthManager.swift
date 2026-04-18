@@ -32,6 +32,7 @@ enum AuthTokenError: LocalizedError {
 
 final class AuthManager: ObservableObject {
     @Published var isAuthenticated: Bool = false
+    @Published var isOfflineMode: Bool = false
     @Published var errorMessage: String?
     @Published var successMessage: String?
     @Published var canResendVerificationEmail: Bool = false
@@ -249,6 +250,7 @@ final class AuthManager: ObservableObject {
     }
 
     func signOut() {
+        isOfflineMode = false
         if (try? Auth.auth().signOut()) != nil {
             isAuthenticated = false
             canResendVerificationEmail = false
@@ -256,9 +258,26 @@ final class AuthManager: ObservableObject {
             successMessage = nil
             NotificationCenter.default.post(name: .userDidSignOut, object: nil)
         } else {
-            errorMessage = "Failed to sign out."
-            successMessage = nil
+            // If no Firebase user (guest mode), just reset state
+            if Auth.auth().currentUser == nil {
+                isAuthenticated = false
+                canResendVerificationEmail = false
+                errorMessage = nil
+                successMessage = nil
+                NotificationCenter.default.post(name: .userDidSignOut, object: nil)
+            } else {
+                errorMessage = "Failed to sign out."
+                successMessage = nil
+            }
         }
+    }
+
+    /// Enters offline "Guest" mode — bypasses login without creating a Firebase session.
+    func continueOffline() {
+        isOfflineMode = true
+        isAuthenticated = true
+        errorMessage = nil
+        successMessage = nil
     }
 
     static func getIDToken() async throws -> String {
