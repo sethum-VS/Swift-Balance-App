@@ -1,4 +1,4 @@
-# ⚡ Balance — iOS Application
+# Balance — iOS Application
 
 > A **time-equity** system where users earn credits through productive activities and spend them on leisure — enforcing a conscious balance between growth and entertainment.
 
@@ -6,7 +6,7 @@
 
 ---
 
-## 📋 Table of Contents
+## Table of Contents
 
 - [Tech Stack](#-tech-stack)
 - [Project Structure](#-project-structure)
@@ -20,7 +20,7 @@
 
 ---
 
-## 🛠 Tech Stack
+## Tech Stack
 
 | Layer | Technology |
 |---|---|
@@ -39,7 +39,7 @@
 
 ---
 
-## 📂 Project Structure
+## Project Structure
 
 ```
 Swift-Balance-App/
@@ -70,7 +70,7 @@ Swift-Balance-App/
 
 ---
 
-## 🏗 High-Level Architecture & Design Choices
+## High-Level Architecture & Design Choices
 
 ### MVVM Pattern
 
@@ -116,7 +116,7 @@ Critical state is persisted to `UserDefaults` so the app survives force-closes:
 
 ---
 
-## 🔗 System Interconnectivity
+## System Interconnectivity
 
 The Balance ecosystem consists of three components that work together:
 
@@ -175,7 +175,7 @@ graph TB
 
 ---
 
-## 🌐 API & WebSocket Structure
+## API & WebSocket Structure
 
 ### REST Endpoints
 
@@ -226,7 +226,7 @@ A **Combine `Timer.publish(every: 25.0)`** sends WebSocket pings to prevent Goog
 
 ---
 
-## 🔐 Firebase Authentication
+## Firebase Authentication
 
 ### Supported Auth Methods
 
@@ -289,7 +289,7 @@ flowchart TD
 
 ---
 
-## 📴 Offline Functionality & Guest Mode
+## Offline Functionality & Guest Mode
 
 ### Guest Mode (No Account Required)
 
@@ -336,7 +336,7 @@ WebSocket Connected (isConnectedToServer = true)
 
 ---
 
-## ⚙️ Environment Configuration
+## Environment Configuration
 
 The `Config.swift` file provides a single toggle to switch between development and production:
 
@@ -362,7 +362,7 @@ All `APIConfig` endpoints and `WebSocketClient` derive their URLs from this sing
 
 ---
 
-## 🚀 Getting Started
+## Getting Started
 
 ### Prerequisites
 
@@ -395,6 +395,6 @@ To switch between local development and production:
 
 ---
 
-## 📄 License
+## License
 
 This project is proprietary software. All rights reserved.
