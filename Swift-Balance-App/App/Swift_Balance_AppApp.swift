@@ -16,7 +16,8 @@ final class AppDelegate: NSObject, UIApplicationDelegate {
         _ application: UIApplication,
         didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]? = nil
     ) -> Bool {
-        FirebaseApp.configure()
+        // Firebase is now configured in the App struct init() to avoid race conditions.
+        // AppDelegate retained for future Push Notification support.
         return true
     }
 }
@@ -28,15 +29,22 @@ struct Swift_Balance_AppApp: App {
     /// Single source of truth — injected into the environment for every child view.
     @StateObject private var webSocketClient: WebSocketClient
     @StateObject private var timeManager: TimeManager
-    @StateObject private var authManager = AuthManager()
+    @StateObject private var authManager: AuthManager
 
     /// Monitors scene lifecycle changes to pause/resume the timer appropriately.
     @Environment(\.scenePhase) private var scenePhase
 
     init() {
+        // Configure Firebase BEFORE any @StateObject initializers that depend on Auth.
+        // This prevents the "default FirebaseApp must be configured" fatal error.
+        if FirebaseApp.app() == nil {
+            FirebaseApp.configure()
+        }
+
         let socket = WebSocketClient()
         _webSocketClient = StateObject(wrappedValue: socket)
         _timeManager = StateObject(wrappedValue: TimeManager(wsClient: socket))
+        _authManager = StateObject(wrappedValue: AuthManager())
     }
 
     var body: some Scene {
