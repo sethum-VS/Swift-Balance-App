@@ -32,7 +32,11 @@ enum AuthTokenError: LocalizedError {
 
 final class AuthManager: ObservableObject {
     @Published var isAuthenticated: Bool = false
-    @Published var isOfflineMode: Bool = false
+    @Published var isOfflineMode: Bool = false {
+        didSet {
+            UserDefaults.standard.set(isOfflineMode, forKey: "isOfflineGuest")
+        }
+    }
     @Published var errorMessage: String?
     @Published var successMessage: String?
     @Published var canResendVerificationEmail: Bool = false
@@ -41,6 +45,10 @@ final class AuthManager: ObservableObject {
     private var authStateHandle: AuthStateDidChangeListenerHandle?
 
     init() {
+        // Restore persisted guest mode flag
+        let savedOfflineMode = UserDefaults.standard.bool(forKey: "isOfflineGuest")
+        self.isOfflineMode = savedOfflineMode
+
         authStateHandle = Auth.auth().addStateDidChangeListener { [weak self] _, user in
             DispatchQueue.main.async {
                 if let user {
@@ -54,7 +62,12 @@ final class AuthManager: ObservableObject {
                         self?.successMessage = nil
                     }
                 } else {
-                    self?.isAuthenticated = false
+                    // No Firebase user — check if guest mode was persisted
+                    if self?.isOfflineMode == true {
+                        self?.isAuthenticated = true
+                    } else {
+                        self?.isAuthenticated = false
+                    }
                     self?.canResendVerificationEmail = false
                 }
             }
